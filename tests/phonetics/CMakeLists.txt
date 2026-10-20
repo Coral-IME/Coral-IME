@@ -1,0 +1,5 @@
+add_executable(coral_correction_path_test correction_path_test.cpp)
+target_include_directories(coral_correction_path_test PRIVATE ${CMAKE_SOURCE_DIR}/modules/phonetics)
+coral_target_common(coral_correction_path_test)
+add_test(NAME correction_path_boundaries COMMAND coral_correction_path_test)
+set_tests_properties(correction_path_boundaries PROPERTIES TIMEOUT 10)

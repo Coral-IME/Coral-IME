@@ -1057,7 +1057,7 @@ void PresentToolbar(HWND window)
 
 	const auto& toolbar = g_presentedToolbar;
 	const wchar_t* labels[] = {
-		toolbar.capsLock ? L"\u5927" : (toolbar.ascii ? L"\u82f1" : L"\u4e2d"),
+		toolbar.capsLock ? L"A" : (toolbar.ascii ? L"\u82f1" : L"\u4e2d"),
 		toolbar.englishPunctuation ? L".," : L"\u3002\uff0c",
 		toolbar.full_width ? L"\u5168" : L"\u534a",
 		toolbar.traditional ? L"\u7e41" : L"\u7b80" };

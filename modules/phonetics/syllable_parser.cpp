@@ -22,6 +22,9 @@
 #include "symbol_handler.h"
 #include "value_handler.h"
 #include "syllable_parser.h"
+#include "correction_path.h"
+#include <cstdint>
+#include <limits>
 #include "script_conversion.h"
 #include "preference_registry.h"
 #include "support/parse_arena.hpp"
@@ -628,26 +631,33 @@ std::pair<std::string, coral::phonetics::Score> coral::phonetics::SyllableParser
 	, coral::LanguageVariant mainType
 )
 {
-	struct Edge
-	{
-		std::string phrase;
-		coral::phonetics::ParseIntegers operateIndexRange;
-		coral::phonetics::Score weight;
-		int to;
-		int correctType;
-
-		Edge() : phrase(""), operateIndexRange(), weight(0), to(0), correctType(0) {}
-		Edge(int t, const std::string& p, coral::phonetics::Score w, const coral::phonetics::ParseIntegers& o, int c) : phrase(p), operateIndexRange(o), weight(w), to(t), correctType(c) {}
-	};
-
 	// 加边
 	const size_t originalLen = originalPystring.length();
-	std::vector<std::vector<Edge>> edges(originalLen + 1);
+	if (originalLen > static_cast<size_t>(std::numeric_limits<int>::max())) return {"", 0.f};
+	std::vector<std::vector<detail::CorrectionPathEdge>> edges(originalLen + 1);
 	for(const auto& correctionResult : correctionResults)
 	{
+        // 结果只由内部生成，仍在进入坐标计算前拒绝空音节及不配对的规则字段。
+        if (correctionResult.result.empty() ||
+            correctionResult.result.size() > static_cast<size_t>(std::numeric_limits<int>::max()) ||
+            correctionResult.method.operateIndexRange.size() != correctionResult.method.operateAlphabetString.size()) continue;
+        std::size_t corrected_length = 0;
+        bool valid = true;
+        for (const auto& syllable : correctionResult.result) {
+            if (syllable.empty() || syllable.size() > static_cast<size_t>(std::numeric_limits<int>::max()) - corrected_length) {
+                valid = false;
+                break;
+            }
+            corrected_length += syllable.size();
+        }
+        for (const auto& replacement : correctionResult.method.operateAlphabetString) {
+            if (replacement.size() > static_cast<size_t>(std::numeric_limits<int>::max())) valid = false;
+        }
+        if (!valid) continue;
 		const std::string_view lastSyllable = correctionResult.result.back();
 
-		int correctIndex = -1, index = 0;
+		int correctIndex = -1;
+		std::int64_t index = 0;
 		for(int i = 0; i < static_cast<int>(correctionResult.result.size()); ++i)
 		{
 			const std::string_view syllable = correctionResult.result[i];
@@ -678,15 +688,16 @@ std::pair<std::string, coral::phonetics::Score> coral::phonetics::SyllableParser
 		coral::phonetics::ParseIntegers operateIndexRange;
 		pinyinSeq.reserve(n);
 
-		int start = 0;
+		std::int64_t start = 0;
 		int insertIndex = -1;
 		for(int i = 0; i < static_cast<int>(n); ++i)
 		{
+            if (start < 0 || start > static_cast<std::int64_t>(originalLen)) break;
 			pinyinSeq.clear();
 			operateIndexRange.clear();
-			operateIndexRange.push_back(start);
+			operateIndexRange.push_back(static_cast<int>(start));
 			bool isMixPinyins = false;
-			int end = start;
+			std::int64_t end = start;
 			int correctType = 0;
 			for(int j = i; j < static_cast<int>(n); ++j) {
 				const std::string_view syllable = correctionResult.result[j];
@@ -731,7 +742,7 @@ std::pair<std::string, coral::phonetics::Score> coral::phonetics::SyllableParser
 							const auto& [left, right] = correctionResult.method.operateIndexRange[k];
 							if(end == left)
 							{
-								end += (right - left + 1) - static_cast<int>((correctionResult.method.operateAlphabetString[k].length()));
+								end += (static_cast<std::int64_t>(right) - left + 1) - static_cast<std::int64_t>(correctionResult.method.operateAlphabetString[k].length());
 								correctType |= (1 << static_cast<int>(coral::phonetics::syntax::CorrectionType::EXTRA_RULE));
 							}
 						}
@@ -740,75 +751,33 @@ std::pair<std::string, coral::phonetics::Score> coral::phonetics::SyllableParser
 					default:
 						break;
 				}
-				end += syllable.size();
-				operateIndexRange.push_back(end);
+				end += static_cast<std::int64_t>(syllable.size());
+                // 不夹取坐标，避免把错误映射伪装成消耗了有效输入的边。
+                if (end < operateIndexRange.back() || end > static_cast<std::int64_t>(originalLen)) break;
+				operateIndexRange.push_back(static_cast<int>(end));
 
-				if (!phrases.empty()) 
+				if (!phrases.empty() && end > start)
 				{
-					if(i == 0 && j == n - 1)
+					if(i == 0 && j == n - 1 && end == static_cast<std::int64_t>(originalLen))
 						hasHitMainDict = true;
 
 					const auto& bestPhrase = phrases[0];
-					edges[start].emplace_back(end, std::string(bestPhrase.phrase), bestPhrase.phrase_weight, operateIndexRange, correctType);
+					edges[static_cast<size_t>(start)].push_back({static_cast<int>(end), std::string(bestPhrase.phrase), bestPhrase.phrase_weight,
+                        std::vector<int>(operateIndexRange.begin(), operateIndexRange.end()), correctType});
 				}
 			}
-			if(operateIndexRange.size() > 1)
-				start = operateIndexRange[1];
+			if (operateIndexRange.size() <= 1) break;
+			start = operateIndexRange[1];
 		}
 	}
 
-	// 最短路
-	std::vector<coral::phonetics::Score> dist(originalLen + 1, -kMaxWeight);
-	coral::phonetics::ParseIntegers from(originalLen + 1, -1);
-	std::vector<Edge> fromEdge(originalLen + 1);
-
-	dist[0] = 0;
-	for (size_t i = 0; i <= originalLen; ++i) 
-	{
-		if (dist[i] == -kMaxWeight) 
-			continue;
-			
-		for (const auto& edge : edges[i]) 
-		{
-			coral::phonetics::Score newDist = dist[i] + edge.weight;
-			if (newDist > dist[edge.to]) 
-			{
-				dist[edge.to] = newDist;
-				from[edge.to] = i;
-				fromEdge[edge.to] = edge;
-			}
-		}
-	}
-
-	if (dist[originalLen] == -kMaxWeight)
-		return {"", 0.f};
-	
-	// 还原路径
-	std::vector<std::string> pathPhrases;
-	size_t current = originalLen;
-	int correctType = 0;
-	while (current != 0 && from[current] != -1) 
-	{
-		pathPhrases.push_back(fromEdge[current].phrase);
-		const auto& operateIndexRange = fromEdge[current].operateIndexRange;
-		for(size_t i = operateIndexRange.size(); i > 1; --i)//i为无符号数，此处把size()-1改为size()起始，1终判断
-			originalSequences.push_back(originalPystring.substr(operateIndexRange[i - 2],
-				static_cast<size_t>(operateIndexRange[i - 1]) - operateIndexRange[i - 2]));
-		correctType |= fromEdge[current].correctType;
-		current = from[current];
-	}
-
-	if(correctType == 0)
-		return {"", 0.f};
-
-	isInsertOrDeleteCorrection = (correctType & (1 << static_cast<int>(coral::phonetics::syntax::CorrectionType::INSERTION))) || (correctType & (1 << static_cast<int>(coral::phonetics::syntax::CorrectionType::DELETION)));
-	std::reverse(pathPhrases.begin(), pathPhrases.end());
-	std::reverse(originalSequences.begin(), originalSequences.end());
-	std::string sentence;
-	for (const auto& phrase : pathPhrases)
-		sentence += phrase;
-
-	return {sentence, dist[originalLen]};
+    int correction_types = 0;
+    auto result = detail::solve_correction_path(edges, originalPystring, originalSequences, correction_types);
+    if (!result.first.empty()) {
+        isInsertOrDeleteCorrection = (correction_types & (1 << static_cast<int>(syntax::CorrectionType::INSERTION))) ||
+            (correction_types & (1 << static_cast<int>(syntax::CorrectionType::DELETION)));
+    }
+    return result;
 }
 
 void coral::phonetics::SyllableParser::build_fuzzy_map()

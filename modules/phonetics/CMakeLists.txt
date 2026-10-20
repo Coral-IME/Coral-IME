@@ -65,6 +65,7 @@ set(CORAL_PHONETICS_SOURCES
     ../storage/bigram_table.cpp
     ../storage/lexicon_table.cpp
     syllable_parser.cpp
+    correction_path.h
     syllable_parser.h
     phonetic_sequence.hpp
     syllable_lattice.cpp

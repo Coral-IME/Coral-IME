@@ -106,6 +106,22 @@ struct SharedConfigData {
 		, m_buffers{} {}
 };
 
+namespace {
+    bool valid_slot(const ConfigSlot& slot) {
+        return slot.m_occupied == 0 ||
+            (slot.m_occupied == 1 &&
+             std::memchr(slot.m_key, '\0', sizeof(slot.m_key)) &&
+             std::memchr(slot.m_value, '\0', sizeof(slot.m_value)));
+    }
+
+    bool valid_buffer(const ConfigBuffer& buffer) {
+        for (const auto& slot : buffer.m_slots) {
+            if (!valid_slot(slot)) return false;
+        }
+        return true;
+    }
+}
+
 class SharedMemoryConfig::Impl {
 public:
 	Impl()
@@ -129,15 +145,19 @@ public:
 #endif
 	}
 	
-	int findSlotInBuffer(const ConfigBuffer& buffer, const char* key, size_t len) const {
+	int findSlotInBuffer(const ConfigBuffer& buffer, const char* key, size_t len, ConfigSlot* found_slot = nullptr) const {
 		HashPair hashPair = computeHash(key, len);
 		for (size_t i = 0; i < HASH_TABLE_SIZE; ++i) {
 			size_t idx = (hashPair.hash + i * hashPair.step) % HASH_TABLE_SIZE;
-			const ConfigSlot& slot = buffer.m_slots[idx];
+			// 先复制固定大小槽位，再校验和解析，避免共享字节在校验后被改写。
+			ConfigSlot slot;
+			std::memcpy(&slot, &buffer.m_slots[idx], sizeof(slot));
+			if (!valid_slot(slot)) return -2;
 			if (!slot.m_occupied) {
 				return -1;
 			}
-			if (std::strcmp(slot.m_key, key) == 0) {
+			if (std::memcmp(slot.m_key, key, len) == 0 && slot.m_key[len] == '\0') {
+				if (found_slot) *found_slot = slot;
 				return static_cast<int>(idx);
 			}
 		}
@@ -151,7 +171,7 @@ public:
 			size_t idx = (hashPair.hash + i * hashPair.step) % HASH_TABLE_SIZE;
 			const ConfigSlot& slot = buffer.m_slots[idx];
 			
-			if (!slot.m_occupied || std::strcmp(slot.m_key, key) == 0) {
+			if (!slot.m_occupied || (std::memcmp(slot.m_key, key, len) == 0 && slot.m_key[len] == '\0')) {
 				return static_cast<int>(idx);
 			}
 		}
@@ -179,6 +199,7 @@ public:
 			}
 #endif
 			ScopedLock createLock(m_hMutex);
+			if (!createLock.isAcquired()) return false;
 
 			if (connectToSharedMemory()) {
 				m_initialized = true;
@@ -244,28 +265,29 @@ public:
 		
 		try {
 			ScopedLock lock(m_hMutex);
-			
+			if (!lock.isAcquired()) return false;
+			auto buffer = std::make_unique<ConfigBuffer>();
+			ShmFlagType currentIdx = 0;
+			if (!copy_active_buffer(*buffer, currentIdx)) return false;
 			ShmFlagType seq = m_configData->m_seqNum.load(std::memory_order_acquire);
-			m_configData->m_seqNum.store(seq + 1, std::memory_order_release);
-			
-			ShmFlagType currentIdx = m_configData->m_activeIndex.load(std::memory_order_acquire);
+			if (seq & 1) return false;
 			ShmFlagType nextIdx = 1 - currentIdx;
 			
-			m_configData->m_buffers[nextIdx] = m_configData->m_buffers[currentIdx];
-			int slotIdx = findSlotInBufferForWrite(m_configData->m_buffers[nextIdx], key.c_str(), key.length());
+			int slotIdx = findSlotInBufferForWrite(*buffer, key.c_str(), key.length());
 			if (slotIdx < 0) {
-				m_configData->m_seqNum.store(seq + 2, std::memory_order_release);
 				LOG_ERROR("SharedMemoryConfig set config failed: hash table full for key: " + key);
 				return false;
 			}
 			
-			ConfigSlot& slot = m_configData->m_buffers[nextIdx].m_slots[slotIdx];
+			ConfigSlot& slot = buffer->m_slots[slotIdx];
 			size_t key_length = key.copy(slot.m_key, MAX_KEY_LENGTH - 1);
 			slot.m_key[key_length] = '\0';
 			size_t valueLen = value.copy(slot.m_value, MAX_VALUE_LENGTH - 1);
 			slot.m_value[valueLen] = '\0';
 			slot.m_occupied = 1;
 			
+			m_configData->m_seqNum.store(seq + 1, std::memory_order_release);
+			std::memcpy(&m_configData->m_buffers[nextIdx], buffer.get(), sizeof(*buffer));
 			m_configData->m_activeIndex.store(nextIdx, std::memory_order_release);
 			m_configData->m_seqNum.store(seq + 2, std::memory_order_release);
 			
@@ -294,20 +316,28 @@ std::string getConfig(const std::string& key) const {
 		//这里进行循环的可能性非常低，几乎不可能，但是有概率，场景就是：一次读者周期比多次写者周期要长，导致写者周期结束时，读者周期还未结束，导致读者读到错误的数据
 		do {
 			seq1 = m_configData->m_seqNum.load(std::memory_order_acquire);
+			if (seq1 & 1) {
+				if (++retries >= MAX_SEQLOCK_RETRIES) return {};
+				continue;
+			}
+			found = false;
+			result.clear();
 			
 			ShmFlagType activeIdx = m_configData->m_activeIndex.load(std::memory_order_acquire);
+			if (activeIdx >= 2 || m_configData->m_initialized.load(std::memory_order_acquire) != 1) return {};
 			const ConfigBuffer& buffer = m_configData->m_buffers[activeIdx];
 			
-			int slotIdx = findSlotInBuffer(buffer, key.c_str(), key.length());
+			ConfigSlot slot;
+			int slotIdx = findSlotInBuffer(buffer, key.c_str(), key.length(), &slot);
+			if (slotIdx == -2) return {};
 			if (slotIdx >= 0) {
-				const ConfigSlot& slot = buffer.m_slots[slotIdx];
 				if (slot.m_occupied) {
 					result = slot.m_value;
 					found = true;
 				}
 			}
 			seq2 = m_configData->m_seqNum.load(std::memory_order_acquire);
-			if (seq1 == seq2) {
+			if (seq1 == seq2 && !(seq2 & 1)) {
 				break;
 			}
 			++retries;
@@ -344,6 +374,7 @@ std::string getConfig(const std::string& key) const {
 		
 		try {
 			ScopedLock lock(m_hMutex);
+			if (!lock.isAcquired()) return false;
 			return setConfigsInternal(configs);
 		}
 		catch (const std::exception& e) {
@@ -363,17 +394,24 @@ std::string getConfig(const std::string& key) const {
 			int retries = 0;
 			do {
 				seq1 = m_configData->m_seqNum.load(std::memory_order_acquire);
+				if (seq1 & 1) {
+					if (++retries >= MAX_SEQLOCK_RETRIES) return {};
+					continue;
+				}
 				ShmFlagType activeIdx = m_configData->m_activeIndex.load(std::memory_order_acquire);
+				if (activeIdx >= 2 || m_configData->m_initialized.load(std::memory_order_acquire) != 1) return {};
 				const ConfigBuffer& buffer = m_configData->m_buffers[activeIdx];
 				result.clear();
 				for (size_t i = 0; i < HASH_TABLE_SIZE; ++i) {
-					const ConfigSlot& slot = buffer.m_slots[i];
+					ConfigSlot slot;
+					std::memcpy(&slot, &buffer.m_slots[i], sizeof(slot));
+					if (!valid_slot(slot)) return {};
 					if (slot.m_occupied) {
 						result.emplace(slot.m_key, slot.m_value);
 					}
 				}
 				seq2 = m_configData->m_seqNum.load(std::memory_order_acquire);
-				if (seq1 == seq2) {
+				if (seq1 == seq2 && !(seq2 & 1)) {
 					break;
 				}
 				++retries;
@@ -386,6 +424,7 @@ std::string getConfig(const std::string& key) const {
 		}
 		catch (const std::exception& e) {
 			LOG_ERROR("SharedMemoryConfig get all configs failed: " + std::string(e.what()));
+			result.clear();
 		}
 		return result;
 	}
@@ -410,6 +449,7 @@ std::string getConfig(const std::string& key) const {
 			}
 #endif
 			ScopedLock createLock(m_hMutex);
+			if (!createLock.isAcquired()) return false;
 
 			bool initSuccess = false;
 			if (connectToSharedMemory()) {
@@ -432,16 +472,31 @@ std::string getConfig(const std::string& key) const {
 	}
 
 private:
+    // 保持 V4 布局；每次使用都校验本地索引，不能只依赖连接时检查。
+    bool copy_active_buffer(ConfigBuffer& buffer, ShmFlagType& active_index) const {
+        if (!m_configData || m_configData->m_initialized.load(std::memory_order_acquire) != 1) return false;
+        for (int retry = 0; retry < MAX_SEQLOCK_RETRIES; ++retry) {
+            const auto sequence = m_configData->m_seqNum.load(std::memory_order_acquire);
+            if (sequence & 1) continue;
+            active_index = m_configData->m_activeIndex.load(std::memory_order_acquire);
+            if (active_index >= 2) return false;
+            std::memcpy(&buffer, &m_configData->m_buffers[active_index], sizeof(buffer));
+            if (sequence == m_configData->m_seqNum.load(std::memory_order_acquire)) return valid_buffer(buffer);
+        }
+        return false;
+    }
+
 	//不加锁的内部实现，假设调用者已持有锁
 	bool setConfigsInternal(const std::vector<std::pair<std::string, std::string>>& configs) {
 		if (configs.empty()) {
 			return true;
 		}
+		auto buffer = std::make_unique<ConfigBuffer>();
+		ShmFlagType currentIdx = 0;
+		if (!copy_active_buffer(*buffer, currentIdx)) return false;
 		ShmFlagType seq = m_configData->m_seqNum.load(std::memory_order_acquire);
-		m_configData->m_seqNum.store(seq + 1, std::memory_order_release);
-		ShmFlagType currentIdx = m_configData->m_activeIndex.load(std::memory_order_acquire);
+		if (seq & 1) return false;
 		ShmFlagType nextIdx = 1 - currentIdx;
-		m_configData->m_buffers[nextIdx] = m_configData->m_buffers[currentIdx];
 		for (const auto& config : configs) {
 			const std::string& key = config.first;
 			const std::string& value = config.second;
@@ -449,18 +504,20 @@ private:
 				LOG_ERROR("SharedMemoryConfig set configs failed: key or value too long: " + key);
 				continue;
 			}
-			int slotIdx = findSlotInBufferForWrite(m_configData->m_buffers[nextIdx], key.c_str(), key.length());
+			int slotIdx = findSlotInBufferForWrite(*buffer, key.c_str(), key.length());
 			if (slotIdx < 0) {
 				LOG_ERROR("SharedMemoryConfig set configs failed: hash table full for key: " + key);
 				continue;
 			}
-			ConfigSlot& slot = m_configData->m_buffers[nextIdx].m_slots[slotIdx];
+			ConfigSlot& slot = buffer->m_slots[slotIdx];
 			size_t key_length = key.copy(slot.m_key, MAX_KEY_LENGTH - 1);
 			slot.m_key[key_length] = '\0';
 			size_t valueLen = value.copy(slot.m_value, MAX_VALUE_LENGTH - 1);
 			slot.m_value[valueLen] = '\0';
 			slot.m_occupied = 1;
 		}
+		m_configData->m_seqNum.store(seq + 1, std::memory_order_release);
+		std::memcpy(&m_configData->m_buffers[nextIdx], buffer.get(), sizeof(*buffer));
 		m_configData->m_activeIndex.store(nextIdx, std::memory_order_release);
 		m_configData->m_seqNum.store(seq + 2, std::memory_order_release);
 		return true;
@@ -507,16 +564,27 @@ private:
 		}
 		try {
 			m_segment = SimpleManagedSharedMemory(bip::open_only, m_sharedMemoryName.c_str());
-			auto result = m_segment.find<SharedConfigData>(CONFIG_DATA_NAME);
-			m_configData = result.first;
-
-			if (!m_configData || !m_configData->m_initialized.load(std::memory_order_acquire)) {
+			// 先按字节查询长度，避免错误大小对象触发第三方类型长度断言。
+			m_configData = nullptr;
+			auto result = m_segment.find<char>(CONFIG_DATA_NAME);
+			const auto base = reinterpret_cast<std::uintptr_t>(m_segment.get_address());
+			const auto address = reinterpret_cast<std::uintptr_t>(result.first);
+			if (!result.first || result.second != sizeof(SharedConfigData) ||
+				address < base || address - base > m_segment.get_size() ||
+				sizeof(SharedConfigData) > m_segment.get_size() - (address - base) ||
+				address % alignof(SharedConfigData) != 0) return false;
+			m_configData = reinterpret_cast<SharedConfigData*>(result.first);
+			auto buffer = std::make_unique<ConfigBuffer>();
+			ShmFlagType active_index = 0;
+			if (!copy_active_buffer(*buffer, active_index)) {
+				m_configData = nullptr;
 				return false;
 			}
 			LOG_TRACE("Connected to existing config shared memory");
 			return true;
 		}
 		catch (const std::exception& e) {
+			m_configData = nullptr;
 			LOG_TRACE("SharedMemoryConfig connect to shared memory failed: " + std::string(e.what()) + " (If this is the first connection, the next step will create it.)");
 			return false;
 		}
