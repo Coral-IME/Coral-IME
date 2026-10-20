@@ -2,6 +2,8 @@
   "format_version": 1,
   "project_license": "MPL-2.0",
   "project_paths": [
+    "tests/network/CMakeLists.txt",
+    "tests/network/curl_lifecycle_test.cpp",
     "modules/updates/configure_update_service.cmake",
     "tests/updates/service_configuration_test.cmake",
     "tests/updates/update_online_probe.cpp",

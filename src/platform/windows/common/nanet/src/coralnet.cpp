@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <curl/curl.h>
+#include <cstdlib>
 #include <fstream>
 #include <mutex>
 #include <thread>
@@ -18,14 +19,21 @@ namespace {
 
 // ---------- 全局初始化 ----------
 
-std::once_flag g_curlGlobalOnce;
+std::mutex curl_runtime_mutex;
+bool curl_runtime_ready = false;
 
-void ensureGlobalInit()
+bool ensureGlobalInit()
 {
-    std::call_once(g_curlGlobalOnce, []() {
-        curl_global_init(CURL_GLOBAL_DEFAULT);
-        std::atexit([]() { curl_global_cleanup(); });
-    });
+    std::lock_guard<std::mutex> lock(curl_runtime_mutex);
+    if (curl_runtime_ready) return true;
+    if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) return false;
+    // 仅为成功获取的引用登记清理；失败可由后续调用重试。
+    if (std::atexit([]() { curl_global_cleanup(); }) != 0) {
+        curl_global_cleanup();
+        return false;
+    }
+    curl_runtime_ready = true;
+    return true;
 }
 
 // ---------- curl 错误映射 ----------
@@ -64,7 +72,6 @@ public:
         , m_onResponse(std::move(onResponse))
         , m_onProgress(std::move(onProgress))
     {
-        ensureGlobalInit();
     }
 
     virtual ~CurlTask() { stop(); }
@@ -83,6 +90,10 @@ public:
         m_running = true;
         NetResult result;
         do {
+            if (!ensureGlobalInit()) {
+                result = NetResult(false, NetError::IOError, 0, "curl_global_init failed");
+                break;
+            }
             m_curl = curl_easy_init();
             if (!m_curl) {
                 result = NetResult(false, NetError::Unknown, 0, "curl_easy_init failed");
@@ -471,7 +482,7 @@ std::unique_ptr<HttpRequest> asyncDownload(const std::string& url,
 
 std::string urlEncode(const std::string& s)
 {
-    ensureGlobalInit();
+    if (!ensureGlobalInit()) return s;
     char* escaped = curl_easy_escape(nullptr, s.c_str(), static_cast<int>(s.size()));
     std::string out = escaped ? escaped : s;
     if (escaped)
@@ -481,7 +492,7 @@ std::string urlEncode(const std::string& s)
 
 std::string urlDecode(const std::string& s)
 {
-    ensureGlobalInit();
+    if (!ensureGlobalInit()) return s;
     char* decoded = curl_easy_unescape(nullptr, s.c_str(), static_cast<int>(s.size()),
                                        nullptr);
     std::string out = decoded ? decoded : s;
@@ -493,8 +504,7 @@ std::string urlDecode(const std::string& s)
 void globalInit() { ensureGlobalInit(); }
 void globalShutdown()
 {
-    // curl_global_cleanup 由 atexit 兜底；此处预留显式入口（幂等无操作）
-    // TODO(可选)：若需要立即回收，可改造 once_flag 为可重置状态
+    // 成功初始化后由退出回调释放引用；保留幂等空操作，不能在仍有请求时提前清理。
 }
 
 const char* toCString(NetError error)

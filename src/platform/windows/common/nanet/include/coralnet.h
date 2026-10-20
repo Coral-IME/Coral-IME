@@ -148,7 +148,8 @@ std::string urlDecode(const std::string& s);
 
 // ---------- 全局初始化（可选） ----------
 // 首次调用任何接口时会自动初始化；显式调用可控制初始化时机。
-// 进程退出前调用 shutdown() 以干净回收（不调用也会在 atexit 兜底）。
+// 初始化失败时请求返回 IO 错误，URL 工具保留输入，后续调用可重试。
+// 成功引用在进程退出时释放；globalShutdown 保留为空操作，调用方须先停止并等待请求。
 void globalInit();
 void globalShutdown();
 

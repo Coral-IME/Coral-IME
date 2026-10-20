@@ -72,8 +72,10 @@ size_t receive(char* bytes, size_t size, size_t count, void* context) noexcept {
 HttpReply transfer(const std::string& url, Sink& sink, HttpPolicy policy, std::uint32_t timeout_ms) {
     if (!timeout_ms || timeout_ms > 600000 || !sink.limit || !allowed_url(url, policy)) { sink.reply.error = DownloadError::kInvalidRequest; return sink.reply; }
     if ((*sink.cancelled)()) { sink.reply.error = DownloadError::kCancelled; return sink.reply; }
-    CurlLease lease; CurlObjects objects;
-    if (!lease.acquired() || !objects.easy || !objects.multi) { sink.reply.error = DownloadError::kDownloadFailed; return sink.reply; }
+    CurlLease lease;
+    if (!lease.acquired()) { sink.reply.error = DownloadError::kDownloadFailed; return sink.reply; }
+    CurlObjects objects;
+    if (!objects.easy || !objects.multi) { sink.reply.error = DownloadError::kDownloadFailed; return sink.reply; }
     const char* protocols = policy == HttpPolicy::kHttpsOnly ? "https" : "http";
     const auto configured =
         ::curl_easy_setopt(objects.easy, CURLOPT_URL, url.c_str()) == CURLE_OK
