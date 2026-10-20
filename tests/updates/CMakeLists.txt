@@ -30,9 +30,13 @@ target_link_libraries(coral_package_acceptance_test PRIVATE coral::update_delive
 coral_target_common(coral_package_acceptance_test)
 add_test(NAME package_acceptance COMMAND coral_package_acceptance_test ${CMAKE_BINARY_DIR}/test-users/package-$<CONFIG>)
 set_tests_properties(release_metadata package_acceptance PROPERTIES TIMEOUT 30)
-if(NOT CORAL_UPDATE_SERVICE_BASE_URL)
+if(NOT CORAL_UPDATES_CONFIGURED)
     add_test(NAME update_agent_disabled COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/check_disabled_agent.py $<TARGET_FILE:coral_update_agent>)
 endif()
+add_test(NAME update_service_configuration COMMAND ${CMAKE_COMMAND}
+    "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+    "-DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/service-configuration"
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/service_configuration_test.cmake)
 
 add_executable(coral_download_wire_test download_wire_test.cpp)
 target_link_libraries(coral_download_wire_test PRIVATE coral::updates)

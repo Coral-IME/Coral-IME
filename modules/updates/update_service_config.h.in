@@ -1,4 +1,4 @@
 #pragma once
 namespace coral::updates {
-inline constexpr char kUpdateServiceBase[] = "@CORAL_UPDATE_SERVICE_BASE_URL@";
+inline constexpr char kUpdateServiceBase[] = "@CORAL_EFFECTIVE_UPDATE_SERVICE_BASE_URL@";
 }

@@ -192,6 +192,14 @@ void check_shortcut_conflicts(HWND window, const std::filesystem::path& output)
         SendMessageW(control, CB_SETCURSEL, index, 0);
         SendMessageW(advanced, WM_COMMAND, MAKEWPARAM(ID_S_SHORTCUT, CBN_SELENDOK), reinterpret_cast<LPARAM>(control));
     };
+    HWND about = SettingsWindow::s_pages[(int)SettingsEnum::SettingType::about];
+    click(about, ID_AB_AUTOCHECK, false);
+    SettingsIniManager update_saved(ini_path.string());
+    require(!sConfig->getIsAutoCheck() && update_saved.load()
+        && !update_saved.getSettingsConfig<bool>("isAutoCheck", true), "About page did not persist disabling automatic checks");
+    click(about, ID_AB_AUTOCHECK, true);
+    require(sConfig->getIsAutoCheck() && update_saved.load()
+        && update_saved.getSettingsConfig<bool>("isAutoCheck", false), "About page did not persist enabling automatic checks");
     require(!sConfig->get_minus_equals_page_enabled() && sConfig->get_translation_shortcut() == "=", "Wrong clean defaults");
     shortcut_messages.clear();
     click(keyboard, ID_K_FLIPMINUS, true);

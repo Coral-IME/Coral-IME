@@ -44,7 +44,7 @@ void UpdateCoordinator::check_update(bool manual) {
 }
 void UpdateCoordinator::start_check() {
     if (!update_service_available()) {
-        if (upgrade_mode_ == UpgradeMode::Manual) notify_manual_result(L"此构建尚未配置更新检查地址");
+        if (upgrade_mode_ == UpgradeMode::Manual) notify_manual_result(L"此构建已关闭在线更新，请使用启用更新的安装包");
         return;
     }
     if (update_window_ && update_window_->is_alive()) {

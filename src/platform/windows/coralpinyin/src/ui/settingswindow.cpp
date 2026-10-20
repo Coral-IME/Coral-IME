@@ -2986,7 +2986,7 @@ void SettingsWindow::createAboutPage()
 	b.header(NAV_TITLES[index], PAGE_DESCRIPTIONS[index]);
 	b.hero(L"CORAL 拼音", L"版本 " + g_version, ID_AB_CHECKUPDATE, L"检查更新");
 	b.section(L"更新检查");
-	b.row(L"自动检查更新", L"每天检查一次，发现新版本时提醒，下载后由你手动安装。", true);
+	b.row(L"自动检查更新", L"每天检查一次，发现新版本时提醒；点击更新后下载并启动安装程序。", true);
 	b.toggle(ID_AB_AUTOCHECK);
 	b.section(L"法律信息");
 	b.row(L"用户协议");
