@@ -761,6 +761,7 @@
     "tests/preferences/CMakeLists.txt",
     "tests/preferences/shared_preferences_test.cpp",
     "tests/renderer_protocol/CMakeLists.txt",
+    "tests/renderer_protocol/renderer_pipe_server_test.cpp",
     "tests/renderer_protocol/renderer_port_smoke.cpp",
     "tests/renderer_protocol/renderer_protocol_v3_test.cpp",
     "tests/renderer_protocol/renderer_window_state_test.cpp",

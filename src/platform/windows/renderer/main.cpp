@@ -12,6 +12,7 @@
 #include <sddl.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <climits>
 #include <cmath>
@@ -43,7 +44,6 @@ int toolbar_button_count() { return kToolbarButtonCount + (g_speech_toolbar_enab
 constexpr UINT kPinCandidateCommand = 1;
 constexpr UINT kDeleteCandidateCommand = 2;
 constexpr UINT kAddPhraseCommand = 3;
-std::atomic<bool> g_running{ true };
 std::uint64_t g_generation = 0;
 HWND g_candidateWindow = nullptr;
 HWND g_toolbarWindow = nullptr;
@@ -1304,12 +1304,71 @@ void ApplyMessage(const coral::renderer_ipc::Message& request,
 	}
 }
 
-void Serve(HANDLE pipe)
+constexpr std::size_t kRendererPipeWorkers = 4;
+constexpr DWORD kRendererTransactionTimeoutMs = 250;
+
+class RendererHandle {
+public:
+    explicit RendererHandle(HANDLE value = nullptr) : value_(value) {}
+    ~RendererHandle() { reset(); }
+    RendererHandle(const RendererHandle&) = delete;
+    RendererHandle& operator=(const RendererHandle&) = delete;
+    HANDLE get() const { return value_; }
+    explicit operator bool() const { return value_ && value_ != INVALID_HANDLE_VALUE; }
+    void reset(HANDLE value = nullptr) {
+        if (*this) ::CloseHandle(value_);
+        value_ = value;
+    }
+private:
+    HANDLE value_;
+};
+
+DWORD renderer_time_remaining(ULONGLONG deadline) {
+    const auto now = ::GetTickCount64();
+    return now >= deadline ? 0 : static_cast<DWORD>(deadline - now);
+}
+
+// 停止事件同时覆盖连接、读取及写入。取消完成前不能释放缓冲区和 OVERLAPPED。
+template<class Start>
+bool renderer_pipe_io(HANDLE pipe, HANDLE stop, DWORD timeout, DWORD& bytes, Start start,
+    DWORD immediate_success = ERROR_SUCCESS, DWORD* io_error = nullptr) {
+    const auto failed = [&](DWORD error) { if (io_error) *io_error = error; return false; };
+    bytes = 0;
+    if (io_error) *io_error = ERROR_SUCCESS;
+    if (::WaitForSingleObject(stop, 0) != WAIT_TIMEOUT) return failed(ERROR_OPERATION_ABORTED);
+    if (timeout == 0) return failed(ERROR_TIMEOUT);
+    RendererHandle event(::CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    if (!event) return failed(::GetLastError());
+    OVERLAPPED operation{};
+    operation.hEvent = event.get();
+    if (start(&operation, &bytes)) return true;
+    const auto error = ::GetLastError();
+    if (immediate_success != ERROR_SUCCESS && error == immediate_success) return true;
+    if (error != ERROR_IO_PENDING) return failed(error);
+    HANDLE events[] = {stop, event.get()};
+    const auto wait = ::WaitForMultipleObjects(2, events, FALSE, timeout);
+    if (wait == WAIT_OBJECT_0 + 1) {
+        if (::GetOverlappedResult(pipe, &operation, &bytes, FALSE)) return true;
+        return failed(::GetLastError());
+    }
+    const auto failure = wait == WAIT_FAILED ? ::GetLastError() :
+        wait == WAIT_TIMEOUT ? ERROR_TIMEOUT : ERROR_OPERATION_ABORTED;
+    ::CancelIoEx(pipe, &operation);
+    ::GetOverlappedResult(pipe, &operation, &bytes, TRUE);
+    return failed(failure);
+}
+
+void Serve(HANDLE pipe, HANDLE stop)
 {
+	const auto deadline = ::GetTickCount64() + kRendererTransactionTimeoutMs;
 	std::vector<std::uint8_t> input(sizeof(coral::renderer_ipc::FrameHeader) +
 		coral::renderer_ipc::kMaxPayloadBytes);
 	DWORD read = 0;
-	if (!::ReadFile(pipe, input.data(), static_cast<DWORD>(input.size()), &read, nullptr)) return;
+	if (!renderer_pipe_io(pipe, stop, renderer_time_remaining(deadline), read,
+        [&](OVERLAPPED* operation, DWORD* bytes) {
+            return ::ReadFile(pipe, input.data(), static_cast<DWORD>(input.size()), bytes, operation);
+        })) return;
+    if (::WaitForSingleObject(stop, 0) != WAIT_TIMEOUT) return;
 	coral::renderer_ipc::Message request;
 	std::string error;
 	if (!coral::renderer_ipc::DecodeMessage(input.data(), read, request, error)) return;
@@ -1340,7 +1399,15 @@ void Serve(HANDLE pipe)
 	std::vector<std::uint8_t> output;
 	if (!coral::renderer_ipc::EncodeMessage(response, output, error)) return;
 	DWORD written = 0;
-	::WriteFile(pipe, output.data(), static_cast<DWORD>(output.size()), &written, nullptr);
+	if (!renderer_pipe_io(pipe, stop, renderer_time_remaining(deadline), written,
+        [&](OVERLAPPED* operation, DWORD* bytes) {
+            return ::WriteFile(pipe, output.data(), static_cast<DWORD>(output.size()), bytes, operation);
+        }) || written != output.size()) return;
+    // 等待正常客户端读完回复并关闭；不用不可取消的 FlushFileBuffers。
+    // 写入、关闭等待共用最初读取的截止时间，停滞连接不能续期占槽。
+    std::uint8_t extra = 0;
+    renderer_pipe_io(pipe, stop, renderer_time_remaining(deadline), read,
+        [&](OVERLAPPED* operation, DWORD* bytes) { return ::ReadFile(pipe, &extra, 1, bytes, operation); });
 }
 
 void CALLBACK ForegroundChanged(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, DWORD)
@@ -1349,27 +1416,70 @@ void CALLBACK ForegroundChanged(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, D
 	if (g_toolbarWindow) ::PostMessageW(g_toolbarWindow, kRefreshMessage, 0, 0);
 }
 
-void PipeLoop()
-{
-	SECURITY_ATTRIBUTES security{};
-	LocalMemory descriptor;
-	if (!BuildPipeSecurity(security, descriptor)) return;
-	const std::wstring pipeName = coral::renderer_ipc::DefaultRendererPipeName();
-	while (g_running.load(std::memory_order_relaxed))
-	{
-		HANDLE pipe = ::CreateNamedPipeW(pipeName.c_str(), PIPE_ACCESS_DUPLEX,
-			PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-			PIPE_UNLIMITED_INSTANCES, coral::renderer_ipc::kMaxPayloadBytes + 64,
-			coral::renderer_ipc::kMaxPayloadBytes + 64, 0, &security);
-		if (pipe == INVALID_HANDLE_VALUE) return;
-		const BOOL connected = ::ConnectNamedPipe(pipe, nullptr) ? TRUE :
-			(::GetLastError() == ERROR_PIPE_CONNECTED);
-		if (connected) Serve(pipe);
-		::FlushFileBuffers(pipe);
-		::DisconnectNamedPipe(pipe);
-		::CloseHandle(pipe);
-	}
-}
+class RendererPipeServer {
+public:
+    ~RendererPipeServer() { stop(); }
+    RendererPipeServer() = default;
+    RendererPipeServer(const RendererPipeServer&) = delete;
+    RendererPipeServer& operator=(const RendererPipeServer&) = delete;
+
+    bool start(const std::wstring& name, DWORD buffer_bytes = coral::renderer_ipc::kMaxPayloadBytes + 64) {
+        if (stop_) return false;
+        stop_.reset(::CreateEventW(nullptr, TRUE, FALSE, nullptr));
+        if (!stop_) return false;
+        SECURITY_ATTRIBUTES security{};
+        LocalMemory descriptor;
+        if (!BuildPipeSecurity(security, descriptor)) { stop(); return false; }
+        try {
+            // 所有实例预先创建，连接数与工作线程数固定，不为每个客户端扩展线程。
+            for (auto& slot : slots_) {
+                slot.pipe.reset(::CreateNamedPipeW(name.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+                    PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+                    static_cast<DWORD>(slots_.size()), buffer_bytes, buffer_bytes, 0, &security));
+                if (!slot.pipe) { stop(); return false; }
+            }
+            for (auto& slot : slots_) {
+                const auto pipe = slot.pipe.get();
+                slot.worker = std::thread([this, pipe] { run(pipe); });
+            }
+            return true;
+        } catch (...) {
+            stop();
+            return false;
+        }
+    }
+
+    void stop() {
+        if (stop_) ::SetEvent(stop_.get());
+        for (auto& slot : slots_) if (slot.worker.joinable()) slot.worker.join();
+        for (auto& slot : slots_) slot.pipe.reset();
+        stop_.reset();
+    }
+
+private:
+    void run(HANDLE pipe) {
+        try {
+            while (::WaitForSingleObject(stop_.get(), 0) == WAIT_TIMEOUT) {
+                DWORD bytes = 0, error = ERROR_SUCCESS;
+                const bool connected = renderer_pipe_io(pipe, stop_.get(), INFINITE, bytes,
+                    [&](OVERLAPPED* operation, DWORD*) { return ::ConnectNamedPipe(pipe, operation); },
+                    ERROR_PIPE_CONNECTED, &error);
+                if (connected) Serve(pipe, stop_.get());
+                ::DisconnectNamedPipe(pipe);
+                if (!connected && error != ERROR_NO_DATA && error != ERROR_PIPE_NOT_CONNECTED) break;
+            }
+        } catch (...) {
+            ::SetEvent(stop_.get());
+        }
+    }
+
+    struct Slot {
+        RendererHandle pipe;
+        std::thread worker;
+    };
+    RendererHandle stop_;
+    std::array<Slot, kRendererPipeWorkers> slots_;
+};
 }
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
@@ -1412,7 +1522,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
 	if (g_toolbarWindow) ::SetTimer(g_toolbarWindow, kToolbarFullscreenTimer, 300, nullptr);
 	HWINEVENTHOOK foregroundHook = ::SetWinEventHook(EVENT_SYSTEM_FOREGROUND,
 		EVENT_SYSTEM_FOREGROUND, nullptr, ForegroundChanged, 0, 0, WINEVENT_OUTOFCONTEXT);
-	std::thread pipeThread(PipeLoop);
+	RendererPipeServer pipe_server;
+    if (!pipe_server.start(coral::renderer_ipc::DefaultRendererPipeName())) {
+        if (foregroundHook) ::UnhookWinEvent(foregroundHook);
+        if (g_toolbarWindow) ::DestroyWindow(g_toolbarWindow);
+        if (g_candidateWindow) ::DestroyWindow(g_candidateWindow);
+        ::ReleaseMutex(singleton);
+        ::CloseHandle(singleton);
+        return 1;
+    }
 	MSG message{};
 	while (::GetMessageW(&message, nullptr, 0, 0) > 0)
 	{
@@ -1420,15 +1538,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
 		::DispatchMessageW(&message);
 	}
 	if (foregroundHook) ::UnhookWinEvent(foregroundHook);
+    pipe_server.stop();
 	g_candidateBackdrop.reset();
 	if (g_toolbarWindow) ::KillTimer(g_toolbarWindow, kToolbarFullscreenTimer);
 	if (g_toolbarWindow) ::KillTimer(g_toolbarWindow, kToolbarHandoffTimer);
-	g_running.store(false, std::memory_order_relaxed);
-	// 唤醒阻塞中的 ConnectNamedPipe 再汇合线程。
-	HANDLE wake = ::CreateFileW(coral::renderer_ipc::DefaultRendererPipeName().c_str(),
-		GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
-	if (wake != INVALID_HANDLE_VALUE) ::CloseHandle(wake);
-	if (pipeThread.joinable()) pipeThread.join();
 	::ReleaseMutex(singleton);
 	::CloseHandle(singleton);
 	return 0;

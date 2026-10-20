@@ -20,4 +20,13 @@ if(CMAKE_CL_64)
         coral_renderer_protocol coral_candidate_view coral_candidate_backdrop coral_preferences coral::foundation User32 Gdi32 Advapi32 Userenv)
     coral_target_common(renderer_window_state_test)
     add_test(NAME renderer_window_state COMMAND renderer_window_state_test)
+
+    add_executable(renderer_pipe_server_test renderer_pipe_server_test.cpp)
+    target_compile_definitions(renderer_pipe_server_test PRIVATE OS_WINDOW _UNICODE UNICODE)
+    target_include_directories(renderer_pipe_server_test PRIVATE ${CMAKE_SOURCE_DIR}/platform/windows/speech)
+    target_link_libraries(renderer_pipe_server_test PRIVATE
+        coral_renderer_protocol coral_candidate_view coral_candidate_backdrop coral_preferences coral::foundation User32 Gdi32 Advapi32 Userenv)
+    coral_target_common(renderer_pipe_server_test)
+    add_test(NAME renderer_pipe_server COMMAND renderer_pipe_server_test)
+    set_tests_properties(renderer_pipe_server PROPERTIES TIMEOUT 20)
 endif()
