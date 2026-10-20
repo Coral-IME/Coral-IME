@@ -185,14 +185,19 @@ void UpdateCoordinator::launch_installer() {
         update_window_->showFailure(L"安装包校验失败，未启动安装。请重新下载。");
         return;
     }
-    update_window_->set_busy(false);
-    const auto result = ShellExecuteW(update_window_->hwnd(), L"open", ready.c_str(), nullptr,
+    // 系统启动过程可能重入窗口消息；调用前就锁定动作，防止重复启动。
+    installer_started_ = true;
+    update_window_->set_busy(true);
+    update_window_->set_progress(100, L"正在启动安装程序");
+    const auto owner = update_window_->hwnd();
+    const auto result = ShellExecuteW(owner, L"open", ready.c_str(), nullptr,
         ready.parent_path().c_str(), SW_SHOWNORMAL);
+    if (reinterpret_cast<INT_PTR>(result) <= 32) installer_started_ = false;
+    if (!update_window_ || update_window_->hwnd() != owner) return;
     if (reinterpret_cast<INT_PTR>(result) <= 32) {
         update_window_->showFailure(L"未能启动安装程序，或系统授权已取消。可点击立即更新重试。");
         return;
     }
-    installer_started_ = true;
     update_window_->show_installer_started();
 }
 void UpdateCoordinator::open_release_page() {
