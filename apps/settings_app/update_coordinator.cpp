@@ -21,6 +21,7 @@ UpdateCoordinator& UpdateCoordinator::instance() {
 void UpdateCoordinator::stop() {
     lifetime_.reset();
     check_request_.reset();
+    download_process_.reset();
     update_window_.reset();
     checking_ = false;
     release_.reset();
@@ -106,16 +107,23 @@ bool UpdateCoordinator::show_update_window() {
     UpdateInfoLite info;
     info.serverVersion = format_release_version(release_->version);
     info.updateDesc = release_->description;
+    info.packageAvailable = release_->package.has_value();
+    installer_started_ = false;
     if (!update_window_->create(info, upgrade_mode_)) {
         update_window_.reset();
         return false;
     }
     const std::weak_ptr<int> lifetime = lifetime_;
-    update_window_->onOpenRelease = [this, lifetime] {
-        if (!lifetime.expired()) open_release_page();
+    update_window_->onUpdate = [this, lifetime] {
+        if (!lifetime.expired()) begin_update();
+    };
+    update_window_->onTimer = [this, lifetime] {
+        if (!lifetime.expired()) poll_update();
     };
     update_window_->onClosed = [this, lifetime] {
         if (lifetime.expired()) return;
+        // 下载进程只属于这个窗口，关闭时取消并等待，不触碰其他更新请求。
+        download_process_.reset();
         // 关闭在窗口过程内运行。把删除推迟到其返回之后。
         appPostTask([this, lifetime] {
             if (!lifetime.expired() && update_window_ && !update_window_->is_alive()) update_window_.reset();
@@ -123,6 +131,69 @@ bool UpdateCoordinator::show_update_window() {
     };
     update_window_->show();
     return true;
+}
+void UpdateCoordinator::begin_update() {
+    if (!release_ || !update_window_ || download_process_ || installer_started_) return;
+    if (!release_->package) { open_release_page(); return; }
+    const auto& package = *release_->package;
+    try {
+        const auto ready = ready_package_path(package.version);
+        if (std::filesystem::exists(ready)) {
+            if (verify_package(ready, package.package) == PackageStatus::kReady) launch_installer();
+            else update_window_->showFailure(L"已有同版本缓存校验失败，请清理该更新缓存后重试。");
+            return;
+        }
+        download_process_ = UpdateProcess::start(adjacent_update_agent(), package);
+        if (!download_process_) {
+            update_window_->showFailure(L"无法启动下载程序，请确认更新程序完整后重试。");
+            return;
+        }
+        update_window_->set_busy(true);
+        update_window_->set_progress(0, L"正在准备下载");
+    } catch (...) {
+        download_process_.reset();
+        update_window_->showFailure(L"无法准备更新文件，请稍后重试。");
+    }
+}
+void UpdateCoordinator::poll_update() {
+    if (!download_process_ || !update_window_) return;
+    const auto progress = download_process_->poll();
+    if (progress.stage == DownloadStage::kReady) {
+        download_process_.reset();
+        launch_installer();
+    } else if (progress.stage == DownloadStage::kFailed || progress.stage == DownloadStage::kCancelled) {
+        download_process_.reset();
+        update_window_->showFailure(progress.stage == DownloadStage::kCancelled
+            ? L"下载已取消，可以重试。" : L"更新下载或校验失败，未运行安装包。请检查网络后重试。");
+    } else {
+        const auto message = progress.stage == DownloadStage::kVerifying ? L"正在校验安装包"
+            : progress.stage == DownloadStage::kPublishing ? L"正在准备安装包" : L"正在下载安装包";
+        update_window_->set_progress(progress.percent, message);
+    }
+}
+void UpdateCoordinator::launch_installer() {
+    if (!release_ || !release_->package || !update_window_ || installer_started_) return;
+    const auto& package = *release_->package;
+    const auto installed = read_running_package_version();
+    if (!installed || !is_newer_version(package.version, *installed)) {
+        update_window_->showFailure(L"本机版本已变化，请关闭窗口后重新检查更新。");
+        return;
+    }
+    const auto ready = ready_package_path(package.version);
+    // 在真正交给系统执行之前重新核对固定版本、大小与摘要。
+    if (verify_package(ready, package.package) != PackageStatus::kReady) {
+        update_window_->showFailure(L"安装包校验失败，未启动安装。请重新下载。");
+        return;
+    }
+    update_window_->set_busy(false);
+    const auto result = ShellExecuteW(update_window_->hwnd(), L"open", ready.c_str(), nullptr,
+        ready.parent_path().c_str(), SW_SHOWNORMAL);
+    if (reinterpret_cast<INT_PTR>(result) <= 32) {
+        update_window_->showFailure(L"未能启动安装程序，或系统授权已取消。可点击立即更新重试。");
+        return;
+    }
+    installer_started_ = true;
+    update_window_->show_installer_started();
 }
 void UpdateCoordinator::open_release_page() {
     if (!release_ || !is_release_page_url(release_->release_url)) return;

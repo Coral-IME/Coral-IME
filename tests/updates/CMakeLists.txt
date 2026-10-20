@@ -11,6 +11,9 @@ set(CORAL_UPDATE_SERVER_SOURCE_DIR "${CMAKE_SOURCE_DIR}/../server-side" CACHE PA
 set(_coral_update_notice_arguments)
 if(EXISTS "${CORAL_UPDATE_SERVER_SOURCE_DIR}/latest.example.json")
     list(APPEND _coral_update_notice_arguments "${CORAL_UPDATE_SERVER_SOURCE_DIR}/latest.example.json")
+    if(EXISTS "${CORAL_UPDATE_SERVER_SOURCE_DIR}/latest.package.example.json")
+        list(APPEND _coral_update_notice_arguments "${CORAL_UPDATE_SERVER_SOURCE_DIR}/latest.package.example.json")
+    endif()
 endif()
 add_test(NAME update_notice COMMAND coral_update_notice_test ${_coral_update_notice_arguments})
 set_tests_properties(update_notice PROPERTIES TIMEOUT 30)
@@ -22,7 +25,7 @@ if(EXISTS "${CORAL_UPDATE_SERVER_SOURCE_DIR}/update_server.py" AND
 else()
     message(STATUS "Update server checkout not found; only client update notice tests are registered")
 endif()
-add_executable(coral_package_acceptance_test package_acceptance_test.cpp)
+add_executable(coral_package_acceptance_test package_acceptance_test.cpp version_fixture.rc)
 target_link_libraries(coral_package_acceptance_test PRIVATE coral::update_delivery)
 coral_target_common(coral_package_acceptance_test)
 add_test(NAME package_acceptance COMMAND coral_package_acceptance_test ${CMAKE_BINARY_DIR}/test-users/package-$<CONFIG>)
@@ -51,3 +54,8 @@ add_test(NAME update_http_limits COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_S
     $<TARGET_FILE:coral_update_http_probe> ${CMAKE_BINARY_DIR}/test-users/update-http-$<CONFIG>)
 set_tests_properties(download_wire download_job PROPERTIES TIMEOUT 15)
 set_tests_properties(update_private_process update_http_limits PROPERTIES TIMEOUT 90)
+
+# 显式运行的真实 HTTPS 联调工具，只下载和校验，从不执行安装包。
+add_executable(coral_update_online_probe update_online_probe.cpp)
+target_link_libraries(coral_update_online_probe PRIVATE coral::update_delivery)
+coral_target_common(coral_update_online_probe)

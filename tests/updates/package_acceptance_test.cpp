@@ -21,6 +21,16 @@ int wmain(int argc, wchar_t** argv) {
         const auto root = std::filesystem::absolute(argv[1]) / (L"人工 校验_" + std::to_wstring(::GetCurrentProcessId()) +
             L"_" + std::to_wstring(::GetTickCount64()));
         std::filesystem::create_directories(root);
+        const auto executable = root / L"版本 回退.exe";
+        std::filesystem::copy_file(std::filesystem::absolute(argv[0]), executable);
+        auto local_version = read_package_version(executable);
+        require(local_version && format_release_version(*local_version) == "1.0.0.0");
+        require(!read_package_version(root / L"missing.exe"));
+        std::filesystem::create_directory(root / L"config");
+        write(root / L"config/coralpinyinConfig.ini", "[app]\r\nVersion=2.3.4.5\r\n");
+        require(format_release_version(*read_package_version(executable)) == "2.3.4.5");
+        write(root / L"config/coralpinyinConfig.ini", "[app]\r\nVersion=invalid\r\n");
+        require(format_release_version(*read_package_version(executable)) == "1.0.0.0");
         const auto source = root / L"pending.tmp", destination = root / L"package.exe";
         ReleaseMetadata metadata;
         require(parse_release_metadata("{\"data\":{\"id\":7,\"version\":\"1.2.3.4\",\"fileSize\":3,\"fileSha256\":\""

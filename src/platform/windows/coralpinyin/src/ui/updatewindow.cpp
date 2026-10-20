@@ -41,7 +41,28 @@ void CoralUpdateWindow::show(bool activate) {
     if (foreground) SetForegroundWindow(m_hwnd);
 }
 void CoralUpdateWindow::showFailure(const wchar_t* message) {
+    set_busy(false);
     if (m_lblStatus) SetWindowTextW(m_lblStatus, message);
+}
+void CoralUpdateWindow::set_busy(bool busy) {
+    m_busy = busy;
+    if (!m_hwnd) return;
+    EnableWindow(GetDlgItem(m_hwnd, ID_BTN_OPEN), !busy);
+    SetWindowTextW(GetDlgItem(m_hwnd, ID_BTN_OPEN), busy ? L"下载中…" : m_info.packageAvailable ? L"立即更新" : L"前往下载");
+    SetWindowTextW(GetDlgItem(m_hwnd, ID_BTN_CLOSE), busy ? L"取消下载" : L"稍后");
+    if (busy) SetTimer(m_hwnd, 1, 200, nullptr);
+    else KillTimer(m_hwnd, 1);
+}
+void CoralUpdateWindow::set_progress(std::uint32_t percent, const wchar_t* message) {
+    const auto text = std::wstring(message) + L"（" + std::to_wstring(percent) + L"%）";
+    if (m_lblStatus) SetWindowTextW(m_lblStatus, text.c_str());
+}
+void CoralUpdateWindow::show_installer_started() {
+    set_busy(false);
+    if (!m_hwnd) return;
+    SetWindowTextW(m_lblStatus, L"安装程序已启动，请在安装窗口中继续。");
+    EnableWindow(GetDlgItem(m_hwnd, ID_BTN_OPEN), FALSE);
+    SetWindowTextW(GetDlgItem(m_hwnd, ID_BTN_CLOSE), L"关闭");
 }
 LRESULT CALLBACK CoralUpdateWindow::wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     auto* self = reinterpret_cast<CoralUpdateWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
@@ -74,15 +95,19 @@ LRESULT CALLBACK CoralUpdateWindow::wndProc(HWND hwnd, UINT msg, WPARAM wParam, 
         make(L"EDIT", description.c_str(),
             ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL | WS_TABSTOP,
             0, 24, 62, 412, 150, WS_EX_CLIENTEDGE);
-        self->m_lblStatus = make(L"STATIC", L"前往 GitHub 下载后，请手动运行安装包。", SS_LEFT,
+        self->m_lblStatus = make(L"STATIC", self->m_info.packageAvailable
+            ? L"点击立即更新，下载并校验后自动启动安装程序。" : L"前往 GitHub 下载后，请手动运行安装包。", SS_LEFT,
             0, 24, 226, 412, 44);
-        make(L"BUTTON", L"前往下载", BS_PUSHBUTTON | WS_TABSTOP, ID_BTN_OPEN, 306, 286, 130, 32);
+        make(L"BUTTON", self->m_info.packageAvailable ? L"立即更新" : L"前往下载", BS_PUSHBUTTON | WS_TABSTOP, ID_BTN_OPEN, 306, 286, 130, 32);
         make(L"BUTTON", L"稍后", BS_PUSHBUTTON | WS_TABSTOP, ID_BTN_CLOSE, 164, 286, 130, 32);
         return 0;
     }
     case WM_COMMAND:
-        if (LOWORD(wParam) == ID_BTN_OPEN && self && self->onOpenRelease) self->onOpenRelease();
+        if (LOWORD(wParam) == ID_BTN_OPEN && self && !self->m_busy && self->onUpdate) self->onUpdate();
         if (LOWORD(wParam) == ID_BTN_CLOSE) PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        return 0;
+    case WM_TIMER:
+        if (wParam == 1 && self && self->m_busy && self->onTimer) self->onTimer();
         return 0;
     case WM_CLOSE:
         DestroyWindow(hwnd);

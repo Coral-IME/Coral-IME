@@ -36,7 +36,7 @@ int main(int argc, char** argv) {
             copy.replace(at, from.size(), to); return copy;
         };
         for (const auto& invalid : {std::string("{}"), valid + "extra", valid + std::string(1, '\0'),
-            replace("\"schema_version\":1", "\"schema_version\":2"), replace("\"schema_version\":1", "\"schema_version\":true"),
+            replace("\"schema_version\":1", "\"schema_version\":2"), replace("\"schema_version\":1", "\"schema_version\":3"), replace("\"schema_version\":1", "\"schema_version\":true"),
             replace("\"schema_version\":1", "\"schema_version\":1.0"), replace("\"schema_version\":1", "\"schema_version\":1,\"schema_version\":1"),
             replace("\"version\":", "\"version\":\"1.0.0.4\",\"version\":"),
             replace("更新说明", "\\u0000"), replace("更新说明", "\\u0001"),
@@ -49,13 +49,30 @@ int main(int argc, char** argv) {
         require(auto_check_due(100000, 0) && !auto_check_due(100000, 99999));
         require(!auto_check_due(186399, 100000) && auto_check_due(186400, 100000));
         require(auto_check_due(100000, 200000) && !auto_check_due(0, 0) && auto_check_due(100000, -1));
-        require(argc == 1 || argc == 2);
+        require(argc >= 1 && argc <= 3);
         // 客户端校验可独立运行；传入服务端示例时额外检查两端的数据契约。
-        if (argc == 2) {
+        if (argc >= 2) {
             std::ifstream source(argv[1], std::ios::binary);
             require(static_cast<bool>(source));
             const std::string example((std::istreambuf_iterator<char>(source)), std::istreambuf_iterator<char>());
             require(parse_update_notice(example, result) && format_release_version(result.version) == "1.0.0.4");
+        }
+        const std::string package = R"({"schema_version":2,"data":{"id":10001,"version":"1.0.0.1","description":"package","fileSize":3,"fileSha256":"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"}})";
+        require(parse_update_notice(package, result) && result.package.has_value() && result.release_url.empty());
+        require(result.package->release_id == 10001 && result.package->package.byte_count == 3);
+        ReleaseVersion installed;
+        require(parse_release_version("1.0.0.0", installed) && is_newer_version(result.version, installed));
+        require(!is_newer_version(installed, result.version) && !is_newer_version(result.version, result.version));
+        for (const auto& from : {std::string("\"id\":10001"), std::string("\"fileSize\":3"), std::string("\"fileSha256\":")}) {
+            auto broken = package;
+            const auto at = broken.find(from);
+            broken.replace(at, from.size(), from == "\"id\":10001" ? "\"id\":0" : from == "\"fileSize\":3" ? "\"fileSize\":0" : "\"other\":");
+            require(!parse_update_notice(broken, result) && result.package->release_id == 10001);
+        }
+        if (argc == 3) {
+            std::ifstream source(argv[2], std::ios::binary);
+            const std::string example((std::istreambuf_iterator<char>(source)), std::istreambuf_iterator<char>());
+            require(parse_update_notice(example, result) && result.package && result.package->release_id == 10001);
         }
         std::cout << "Notice schema, release page validation, version comparison and daily scheduling passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

@@ -348,13 +348,37 @@ void check_update_notice_window(const std::filesystem::path& output)
     GetWindowTextW(description, text, 128);
     require(std::wstring(text).find(L"\r\n") != std::wstring::npos, "Update notes lost line breaks");
     int opened = 0, closed = 0;
-    notice.onOpenRelease = [&] { ++opened; }; // 间谍进程：测试中绝不打开真实浏览器。
+    notice.onUpdate = [&] { ++opened; }; // 间谍动作：测试中不打开浏览器或安装程序。
     notice.onClosed = [&] { ++closed; };
     SendMessageW(window, WM_COMMAND, MAKEWPARAM(0x2200, BN_CLICKED), reinterpret_cast<LPARAM>(button));
     require(opened == 1 && IsWindow(window), "Download button did not invoke the release-page action");
     save_page(window, output / "update-notice.png");
     SendMessageW(window, WM_CLOSE, 0, 0);
     require(!notice.is_alive() && closed == 1, "Closing the notice did not release its window");
+    CoralUpdateWindow package_notice;
+    info.packageAvailable = true;
+    require(package_notice.create(info, UpgradeMode::Manual), "Cannot create package update window");
+    window = package_notice.hwnd();
+    button = GetDlgItem(window, 0x2200);
+    GetWindowTextW(button, text, 128);
+    require(std::wstring(text) == L"立即更新", "Package action is missing");
+    opened = 0;
+    int ticks = 0;
+    package_notice.onUpdate = [&] { ++opened; };
+    package_notice.onTimer = [&] { ++ticks; };
+    package_notice.set_busy(true);
+    require(!IsWindowEnabled(button), "Downloading allows duplicate clicks");
+    SendMessageW(window, WM_COMMAND, MAKEWPARAM(0x2200, BN_CLICKED), 0);
+    SendMessageW(window, WM_TIMER, 1, 0);
+    require(opened == 0 && ticks == 1, "Busy state did not guard updates or poll progress");
+    package_notice.set_progress(42, L"正在下载安装包");
+    package_notice.showFailure(L"测试下载失败");
+    require(IsWindowEnabled(button), "Failed download cannot be retried");
+    SendMessageW(window, WM_COMMAND, MAKEWPARAM(0x2200, BN_CLICKED), 0);
+    require(opened == 1, "Retry action did not fire");
+    package_notice.show_installer_started();
+    require(!IsWindowEnabled(button), "Installer can be started twice");
+    SendMessageW(window, WM_CLOSE, 0, 0);
 }
 
 int main(int argc, char** argv)

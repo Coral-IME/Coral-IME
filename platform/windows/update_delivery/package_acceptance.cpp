@@ -137,11 +137,29 @@ std::optional<ReleaseVersion> read_running_package_version() {
         const auto length = ::GetModuleFileNameW(nullptr, buffer.data(), capacity);
         if (!length) return std::nullopt;
         if (length == capacity) continue;
-        ReleaseVersion version;
         const auto path = std::filesystem::path(std::wstring(buffer.data(), length));
-        if (!parse_release_version(config::readInstalledAppVersion(path.parent_path()), version)) return std::nullopt;
-        return version;
+        return read_package_version(path);
     }
     return std::nullopt;
+}
+std::optional<ReleaseVersion> read_package_version(const std::filesystem::path& executable) {
+    if (!executable.is_absolute()) return std::nullopt;
+    const auto attributes = GetFileAttributesW(executable.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) return std::nullopt;
+    ReleaseVersion version;
+    if (parse_release_version(config::readInstalledAppVersion(executable.parent_path()), version)) return version;
+    // 正式安装包可不带 app/Version；与关于页一样回退到目标程序的版本资源。
+    DWORD ignored = 0;
+    const auto size = GetFileVersionInfoSizeW(executable.c_str(), &ignored);
+    if (!size || size > 262144) return std::nullopt;
+    std::vector<std::uint8_t> bytes(size);
+    if (!GetFileVersionInfoW(executable.c_str(), 0, size, bytes.data())) return std::nullopt;
+    VS_FIXEDFILEINFO* info = nullptr;
+    UINT length = 0;
+    if (!VerQueryValueW(bytes.data(), L"\\", reinterpret_cast<void**>(&info), &length)
+        || !info || length < sizeof(*info) || info->dwSignature != 0xfeef04bd) return std::nullopt;
+    version.components = {HIWORD(info->dwFileVersionMS), LOWORD(info->dwFileVersionMS),
+        HIWORD(info->dwFileVersionLS), LOWORD(info->dwFileVersionLS)};
+    return version;
 }
 }

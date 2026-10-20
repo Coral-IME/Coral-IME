@@ -15,4 +15,5 @@ std::filesystem::path package_cache_directory();
 std::filesystem::path ready_package_path(const ReleaseVersion& version);
 std::filesystem::path reserve_pending_package();
 std::optional<ReleaseVersion> read_running_package_version();
+std::optional<ReleaseVersion> read_package_version(const std::filesystem::path& executable);
 }

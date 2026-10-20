@@ -47,15 +47,21 @@ bool parse_update_notice(std::string_view json, UpdateNotice& result) {
     rapidjson::Document doc;
     doc.Parse<rapidjson::kParseValidateEncodingFlag>(json.data(), json.size());
     if (doc.HasParseError() || !unique_object(doc) || !doc.HasMember("schema_version") ||
-        !doc["schema_version"].IsUint() || doc["schema_version"].GetUint() != 1 ||
+        !doc["schema_version"].IsUint() ||
+        (doc["schema_version"].GetUint() != 1 && doc["schema_version"].GetUint() != 2) ||
         !doc.HasMember("data") || !unique_object(doc["data"])) return false;
     const auto& data = doc["data"];
-    if (!data.HasMember("version") || !data.HasMember("description") || !data.HasMember("release_url")) return false;
+    if (!data.HasMember("version") || !data.HasMember("description")) return false;
     UpdateNotice candidate;
     std::string version;
     if (!text(data["version"], 23, version) || !parse_release_version(version, candidate.version) ||
-        !text(data["description"], 16384, candidate.description) ||
-        !text(data["release_url"], 2048, candidate.release_url) || !is_release_page_url(candidate.release_url)) return false;
+        !text(data["description"], 16384, candidate.description)) return false;
+    if (doc["schema_version"].GetUint() == 2) {
+        ReleaseMetadata package;
+        if (!parse_release_metadata(json, package)) return false;
+        candidate.package = std::move(package);
+    } else if (!data.HasMember("release_url") || !text(data["release_url"], 2048, candidate.release_url)
+        || !is_release_page_url(candidate.release_url)) return false;
     result = std::move(candidate);
     return true;
 }

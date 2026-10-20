@@ -4,6 +4,7 @@
 #include "updatewindow.h"
 #include "coral/updates/update_notice.h"
 #include "update_http.h"
+#include "update_process.h"
 #include <optional>
 
 namespace coral::updates {
@@ -22,6 +23,9 @@ private:
     void on_release_response(const std::string& body, bool success);
     bool show_update_window();
     void open_release_page();
+    void begin_update();
+    void poll_update();
+    void launch_installer();
     void notify_manual_result(const wchar_t* message);
     std::unique_ptr<MetadataRequest> check_request_;
     std::shared_ptr<int> lifetime_ = std::make_shared<int>(0);
@@ -29,5 +33,7 @@ private:
     UpgradeMode upgrade_mode_ = UpgradeMode::Manual;
     bool checking_ = false;
     std::optional<UpdateNotice> release_;
+    std::unique_ptr<UpdateProcess> download_process_;
+    bool installer_started_ = false;
 };
 }

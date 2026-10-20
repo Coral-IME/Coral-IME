@@ -30,7 +30,8 @@
       "inherits": "base",
       "architecture": "x64",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
+        "CMAKE_BUILD_TYPE": "Release",
+        "CORAL_UPDATE_SERVICE_BASE_URL": "https://coralime.cn"
       }
     },
     {

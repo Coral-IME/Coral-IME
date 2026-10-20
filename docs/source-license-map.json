@@ -2,6 +2,8 @@
   "format_version": 1,
   "project_license": "MPL-2.0",
   "project_paths": [
+    "tests/updates/update_online_probe.cpp",
+    "tests/updates/version_fixture.rc",
     ".gitignore",
     "AGENTS.md",
     "CANDIDATE_STATUS.md",
