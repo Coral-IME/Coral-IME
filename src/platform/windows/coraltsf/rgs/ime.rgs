@@ -1,0 +1,11 @@
+HKCR
+{
+	NoRemove AppID
+	{
+		ForceRemove '%APPID% = s 'coral office pinyin'
+		ForceRemove 'ime.DLL'
+		{
+			val AppID = s '%APPID%'
+		}
+	}
+}

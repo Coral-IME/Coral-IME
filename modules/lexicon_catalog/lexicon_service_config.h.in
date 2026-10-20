@@ -1,0 +1,4 @@
+#pragma once
+namespace coral::lexicon_catalog {
+inline constexpr char kLexiconServiceBase[] = "@CORAL_LEXICON_SERVICE_BASE_URL@";
+}

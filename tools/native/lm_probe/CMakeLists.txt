@@ -1,0 +1,6 @@
+add_executable(coral_lm_probe lm_probe.cpp)
+target_link_libraries(coral_lm_probe PRIVATE coral::language_model)
+target_compile_features(coral_lm_probe PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(coral_lm_probe PRIVATE /utf-8)
+endif()

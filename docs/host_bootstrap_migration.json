@@ -1,0 +1,23 @@
+{
+  "batch": "6B",
+  "date": "2026-10-14",
+  "paths": {
+    "src/platform/windows/coraltsf/src/enginehostlauncher.h": "platform/windows/host_startup/windows_host_bootstrap.h",
+    "src/platform/windows/coraltsf/src/enginehostlauncher.cpp": "platform/windows/host_startup/windows_host_bootstrap.cpp"
+  },
+  "symbols": {
+    "coral::tsf::EnsureEngineHostRunning": "coral::bootstrap::start_session_host (result and injected hooks)",
+    "coral::tsf::IsRestrictedTsfHost": "coral::bootstrap::is_restricted_text_host",
+    "WaitForPipe": "StartupActions::probe_pipe + ensure_host_ready budget",
+    "EngineHostPath": "select_session_host_path + growing module_path"
+  },
+  "new": ["resources/product_identity.json", "coral::product_identity", "coral::host_bootstrap", "StartupActions", "StartupResult", "HostLaunchHooks"],
+  "classification": {
+    "identity": "Centralized existing values and generated bindings; registry/diagnostic/service algorithms retained",
+    "startup_policy": "Rewritten with injected time/actions and shared budget",
+    "windows_adapter": "Rewritten ownership/path/polling; existing Windows API operations and restricted-host criteria retained",
+    "service_rpc": "Existing implementation injected without rewrite",
+    "dictionary": "Algorithms and data formats retained byte-for-byte"
+  },
+  "remaining": ["service RPC and other Windows implementation/naming", "other product identifiers and COM GUIDs", "renderer startup", "actual Search/AppContainer", "COM focus/composition and clipboard/UI lifecycle", "final per-file audit and clean build"]
+}

@@ -1,0 +1,9 @@
+#pragma once
+#include <windows.h>
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <string>
+#include <vector>
+#include <memory>
+#include <utility>

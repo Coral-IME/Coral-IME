@@ -1,0 +1,42 @@
+{
+  "removed_unused": [
+    "modules/phonetics/support/parse_executor.cpp",
+    "modules/phonetics/support/parse_executor.hpp",
+    "modules/phonetics/support/recency_cache.hpp",
+    "modules/runtime/resource_provider.h"
+  ],
+  "rewritten": {
+    "modules/phonetics/support/mapped_resource.hpp": "modules/storage/verified_resource.h",
+    "modules/phonetics/support/mapped_view.h": "modules/storage/model_view.h"
+  },
+  "types": {
+    "SharedMemoryMapper": "coral::storage::VerifiedResource",
+    "SharedMemoryViewBase": "coral::storage::ModelView"
+  },
+  "actual_loading_owner": "coral::foundation::BackgroundTasks",
+  "dictionary_algorithms": "Preserved; consumers only change mapping/worker lifecycle calls.",
+  "batch": 4,
+  "new_targets": {
+    "coral_resource_io": "coral::resource_io"
+  },
+  "new_tests": [
+    "background_tasks",
+    "resource_io",
+    "engine_loading",
+    "engine_unload"
+  ],
+  "source_notices": {
+    "modules/phonetics/support/mapped_view.h": "Created by coral on 25-7-23; original adapter attribution retained here, ownership implementation rewritten."
+  },
+  "retained_boundaries": [
+    "Dictionary/model algorithms and file formats",
+    "Shared resource names and 8-byte size envelope",
+    "Legacy DLL export ABI"
+  ],
+  "limitations": [
+    "POSIX implementation not executed on this Windows host",
+    "DLL unload validated after initialization/explicit shutdown only",
+    "Full instance restart and UI/clipboard/IPC teardown remain later batches"
+  ],
+  "initialization_failure": "Reported synchronous model/script load failures explicitly stop loading, learning and logging workers."
+}

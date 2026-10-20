@@ -1,0 +1,94 @@
+{
+  "paths": {
+    "modules/runtime/legacy_engine_api.h": "modules/runtime/core_operations.h",
+    "modules/runtime/legacy_engine_api.cpp": "modules/runtime/core_operations.cpp",
+    "tests/lexicon_import_dialog/support/legacy_engine_api.h": "tests/lexicon_import_dialog/support/core_operations.h"
+  },
+  "functions": {
+    "initEngine": "start_runtime",
+    "unInitEngine": "stop_runtime",
+    "isRuntimeReady": "runtime_ready",
+    "initSettingsConfig": "initialize_compat_settings",
+    "generateLexiconFiles": "compile_resource_files",
+    "parsePinyin": "parse_candidates",
+    "kclearCache": "clear_parse_cache",
+    "getCandidateDisplayText": "candidate_display_label",
+    "recordSelected": "remember_candidate",
+    "storeUserLexicon": "flush_user_lexicon",
+    "maintainLexicon": "maintain_lexicon",
+    "clearUserLexiconAll": "clear_user_lexicon",
+    "buildLexiconFromDir": "compile_lexicon_directory",
+    "loadHotLexiconByLine": "append_external_phrase",
+    "beginLoadHotLexicon": "begin_external_phrases",
+    "endLoadHotLexicon": "end_external_phrases",
+    "setLangengineSettingConfig": "set_compat_settings",
+    "updateLexiconStatus": "refresh_lexicon_state",
+    "dllParsePinyin": "parse_candidate_rows",
+    "getAllPinyinSplits": "read_pinyin_splits",
+    "isExistNextPage": "read_next_page_state",
+    "revertUserLexicon": "revert_phrase_learning",
+    "importLexiconFromFile": "import_user_file",
+    "exportLexiconToFile": "export_user_file",
+    "prepareUserLexiconImport": "prepare_user_import",
+    "commitUserLexiconImport": "commit_user_import",
+    "revertLastUserLexiconImport": "revert_user_import",
+    "generateCorrections": "write_correction_trace",
+    "generateCorrectionSuggestions": "read_correction_suggestions",
+    "dllParsePinyinNoCorrection": "parse_uncorrected_rows",
+    "applyCandidateAction": "apply_candidate_rule",
+    "addCustomPhrase": "add_phrase_shortcut",
+    "removeCustomPhrase": "remove_phrase_shortcut",
+    "listCustomPhrases": "list_phrase_shortcuts",
+    "setIsTraditionalChinese": "set_runtime_traditional",
+    "getIsTraditionalChinese": "runtime_traditional",
+    "setIsFullWidth": "set_runtime_full_width",
+    "getIsFullWidth": "runtime_full_width",
+    "updateEngineConfigSnapshot": "apply_runtime_settings",
+    "refreshEngineConfigSnapshot": "refresh_runtime_settings",
+    "savePinyinParsedResult": "write_parse_trace",
+    "initPinyinAnnotator": "load_pronunciation_index",
+    "dllAnnotateWord": "read_pronunciation_rows",
+    "batchAnnotateWords": "annotate_word_batch"
+  },
+  "namespace": {
+    "LangengineAPI": "coral::runtime"
+  },
+  "removed": [
+    "modules/runtime/legacy_engine_exports.def",
+    "tests/resource_io/engine_unload_test.cpp"
+  ],
+  "target": {
+    "langengine": "coral_engine_core",
+    "langengine_test_core": "coral_engine_core"
+  },
+  "removed_unused_operations": [
+    "initialize_compat_settings",
+    "set_compat_settings"
+  ],
+  "removed_unused_aliases": [
+    "int_vector_iter"
+  ],
+  "aliases": {
+    "string_vector_iter": "StringOutputIterator"
+  },
+  "format_version": 1,
+  "batch": "5B2a",
+  "architecture": "Static engine core in each binary; external sessions use CSW4.",
+  "rewritten_boundaries": [
+    "tools/native/resource_compiler/main.cpp",
+    "tools/data/generate_lexicons.py",
+    "PE import verification and package pairing"
+  ],
+  "build_record": {
+    "format_version": 3,
+    "cli": "--resource-compiler",
+    "hash_field": "resource_compiler_sha256"
+  },
+  "dictionary_algorithms": "Retained; internal operation bodies and dictionary files only renamed and linkage adapted.",
+  "remaining": [
+    "Model instance reconstruction",
+    "Production host session ownership and bounded/interrupted shutdown",
+    "Full UI/clipboard lifecycle"
+  ],
+  "provenance": "Existing author and license notices retained; namespace changes do not establish independent algorithm provenance."
+}

@@ -1,0 +1,27 @@
+{
+  "batch": "6C",
+  "date": "2026-10-14",
+  "paths": {
+    "src/platform/windows/coralpinyinsvc/main.cpp": "apps/launcher_service/service_entry.cpp",
+    "src/platform/windows/coralpinyinsvc/serviceipc.h": "apps/launcher_service/launch_rpc_server.h",
+    "src/platform/windows/coralpinyinsvc/serviceipc.cpp": "apps/launcher_service/launch_rpc_server.cpp",
+    "src/platform/windows/coralpinyinsvc/help.hpp": "platform/windows/service_launch/windows_launch_actions.cpp",
+    "src/platform/windows/coralpinyinsvc/coralpinyinsvc.rc": "apps/launcher_service/launcher_service.rc.in",
+    "src/platform/windows/coralpinyinsvc/resource.h": "apps/launcher_service/resource.h",
+    "src/platform/windows/coralpinyinsvc/CMakeLists.txt": "apps/launcher_service/CMakeLists.txt"
+  },
+  "removed_unused": ["src/platform/windows/coralpinyinsvc/pch.cpp", "src/platform/windows/coralpinyinsvc/pch.h"],
+  "symbols": {
+    "CCoralPinyinService": "coral::service::LaunchRpcServer (owned object, no singleton)",
+    "hlp::LaunchMainProcessInSession": "WindowsLaunchActions::launch_process",
+    "hlp::GetCoralPinyinExePath": "WindowsLaunchActions::registered_settings_path",
+    "hlp::IsProcessRunning": "WindowsLaunchActions::already_running (full path/session)",
+    "hlp::IsInstalling": "WindowsLaunchActions::installation_blocked",
+    "ReportStatus": "report_status",
+    "ServiceCtrlHandler": "service_control_handler",
+    "ServiceMain": "service_main"
+  },
+  "rewritten": ["strict session parser and target launch policy", "kernel caller session gate", "RPC ownership and error adapter", "registry/path/process validation", "Windows token/environment/process ownership"],
+  "retained": ["Windows WTS/process APIs", "coralipc byte protocol and original callbacks", "SCM status/dispatch algorithm with naming migration", "product/RPC method values", "dictionary algorithms and formats"],
+  "remaining": ["actual SCM and privileged user-token launch", "actual Search/AppContainer", "settings/update/diagnostic/renderer and other identities", "COM focus/composition and clipboard/UI lifecycle", "final per-file audit and clean build"]
+}

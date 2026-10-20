@@ -1,0 +1,132 @@
+﻿// {{NO_DEPENDENCIES}}
+// Microsoft Visual C++ 生成的包含文件。
+// 供 ime.rc 使用
+//
+#define IDS_PROJNAME                    100
+#define IDR_IME                         101
+#define IDR_TEXTSERVICE                 102
+#define IDR_LANGBARITEMBUTTON           103
+#define IDR_EDITSESSION                 104
+#define IDI_TEXTSERVICE                 202
+#define IDI_EN                          203
+#define IDI_ZH                          204
+#define IDP_SETTING                     205
+#define IDP_SETTING_TIP                 206
+#define IDP_SETTING_DARK                207
+#define IDI_A                           213
+#define IDI_JIU                         214
+#define IDI_AI                          217
+#define IDB_PNG1                        218
+#define IDP_AI                          218
+#define IDB_PNG2                        230
+#define IDB_NEXT                        300
+#define IDB_NEXT_DISABLE                301
+#define IDB_NEXT_HOVER                  302
+#define IDB_NEXT_PRESS                  303
+#define IDB_PREV                        304
+#define IDB_PREV_DISABLE                305
+#define IDB_PREV_HOVER                  306
+#define IDB_PREV_PRESS                  307
+#define IDB_ASCII_CN                    401
+#define IDB_ASCII_EN                    402
+#define IDB_FULL                        403
+#define IDB_HALF                        404
+#define IDB_PUNC_EN                     405
+#define IDB_PUNC_CN                     406
+#define IDB_LOGO_SETTING                407
+#define IDB_PUNC_EN_DRAK                408
+#define IDB_FULL_DARK                   409
+#define IDB_HALF_DARK                   410
+#define IDB_ASCII_CN_DARK               411
+#define IDB_PUNC_CN_DARK                412
+#define IDB_ASCII_EN_DARK               413
+#define IDB_CAPSLOCK                    414
+#define IDB_CAPSLOCK_DARK               415
+#define IDB_CHARSET_SIMPLIFIED          416
+#define IDB_CHARSET_TRADITIONAL         417
+#define IDB_CHARSET_SIMPLIFIED_DARK     418
+#define IDB_CHARSET_TRADITIONAL_DARK    419
+#define IDB_CORAL_LOGO                  420
+#define IDD_CANDIDATE                   501
+#define IDB_ANGLE_RIGHT                 601
+#define IDB_CHECK_CIRCLE_FILL           602
+#define IDB_FEEDBACK                    603
+#define IDB_GEAR                        604
+#define IDB_FLOATINGTOOLBAR             605
+#define IDB_DARK_FEEDBACK               606
+#define IDB_DARK_GEAR                   607
+#define IDB_DARK_FLOATINGTOOLBAR        608
+#define IDB_MENU_HIDE_TOOLBAR            609
+#define IDB_MENU_CUSTOMIZE_TOOLBAR       610
+#define IDB_MENU_SETTINGS                611
+#define IDB_MENU_ABOUT                   612
+#define IDB_MENU_FEEDBACK                613
+#define IDB_EXPAND                      901
+#define IDB_EXPAND_DISABLE              902
+#define IDB_EXPAND_HOVER                903
+#define IDB_EXPAND_PRESS                904
+#define IDB_COLLAPSE                    905
+#define IDB_COLLAPSE_DISABLE            906
+#define IDB_COLLAPSE_HOVER              907
+#define IDB_COLLAPSE_PRESS              908
+#define IDB_NETERROR                    909
+#define IDS_U_TIP                       1002
+#define IDS_UU_TIP                      1003
+#define IDS_V_TIP                       1004
+#define IDS_SIMSUN                      1005
+#define IDS_SIMHEI                      1006
+#define IDS_DENGXIAN                    1007
+#define IDS_FANGSONG                    1008
+#define IDS_KAITI                       1009
+#define IDS_YAHEI                       1010
+#define IDS_NETERROR_TEXT               1011
+#define IDS_MENU_TITLEFULL              1101
+#define IDS_MENU_TITLEHALF              1102
+#define IDS_MENU_TITLECHARSETSIMPLIFIED 1103
+#define IDS_MENU_TITLECHARSETTRADITIONAL 1104
+#define IDS_MENU_TITLESETTINGS          1105
+#define IDS_MENU_TITLEFEEDBACK          1106
+#define IDS_SUBMENU_OPTIONFULL          1107
+#define IDS_SUBMENU_OPTIONHALF          1108
+#define IDS_SUBMENU_OPTIONSIMPLIFIED    1109
+#define IDS_SUBMENU_OPTIONTRADITIONAL   1110
+#define IDS_TOOL_TIP_DEC                1201
+#define IDS_BUTTON_DEC                  1202
+#define IDS_CPINYINMODEL_LOAD_ERROR     1301
+#define IDS_CORALPINYIN_TITLE             1302
+#define IDS_CORAL_SHURUFA                 1401
+#define IDS_FLOATINGTOOLBAR_OPEN        1601
+#define IDS_FLOATINGTOOLBAR_CLOSE       1602
+#define IDS_FLOATINGTOOLBAR_SETTINGS    1603
+#define IDS_FLOATINGTOOLBAR_LANGUAGE    1604
+#define IDS_FLOATINGTOOLBAR_PUNCPUATION 1605
+#define IDS_FLOATINGTOOLBAR_FULLHALF    1606
+#define IDS_TOOLTIP_FIXEDFIRST          1607
+#define IDS_TOOLTIP_SEARCH              1608
+#define IDS_TOOLTIP_DELETE              1609
+#define IDS_TOOLTIP_ADDPHRASE           1610
+#define IDS_TOOLTIP_CANCELFIRST         1611
+#define IDS_TOOLTIP_EDITPHRASE          1612
+#define IDS_TOOLTIP_USERFREQUENCY       1614
+#define IDS_TOOLTIP_SYSTEMFREQUENCY     1615
+#define IDS_CONTEXTMENU_PINFIRST         1735
+#define IDS_FLOATINGTOOLBAR_CHARSET    1617
+#define IDS_FLOATINGTOOLBAR_LOGO        1618
+#define IDS_SUGGEST_LOADING             1718
+#define IDS_SUGGEST_AUDITERROR          1719
+#define IDS_SUGGEST_NETERROR            1720
+#define IDS_SUGGEST_RETRY               1721
+#define IDS_SUGGEST_SEARCH              1722
+#define IDS_SUGGEST_INPUT               1723
+
+
+// 新对象的下一个默认值
+// 
+#ifdef APSTUDIO_INVOKED
+#ifndef APSTUDIO_READONLY_SYMBOLS
+#define _APS_NEXT_RESOURCE_VALUE        241
+#define _APS_NEXT_COMMAND_VALUE         32768
+#define _APS_NEXT_CONTROL_VALUE         702
+#define _APS_NEXT_SYMED_VALUE           106
+#endif
+#endif

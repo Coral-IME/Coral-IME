@@ -1,0 +1,40 @@
+﻿// ime.idl: ime 的 IDL 源
+//
+
+// 此文件将由 MIDL 工具处理以
+// 生成类型库(ime.tlb)和封送处理代码。
+
+import "oaidl.idl";
+import "ocidl.idl";
+
+[
+	uuid(aad37e8c-6d1e-410a-b307-256f51e6f69d),
+	version(1.0),
+]
+library imeLib
+{
+	importlib("stdole2.tlb");
+	[
+		uuid(81A20B05-7035-4929-9181-DF030E5455B9)
+	]
+	coclass TextService
+	{
+		[default] interface IUnKnown;
+	};
+
+	[
+		uuid(99866DF6-A28D-46EE-9FCA-7E3589ED64D6)
+	]
+	coclass LangBarItemButton
+	{
+		[default] interface IUnKnown;
+	};
+
+	[
+		uuid(15F30991-DB36-45C0-A30A-07DCC5AE4293)
+	]
+	coclass EditSession
+	{
+		[default] interface IUnKnown;
+	};
+};

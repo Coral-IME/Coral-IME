@@ -1,0 +1,28 @@
+{
+  "format_version": 1,
+  "batch": "5B2b1",
+  "paths_moved": {},
+  "lifecycle_changes": {
+    "SyllableParser::instance": "Lazy unique ownership, retaining the internal accessor",
+    "SyllableParser::release_instance": "Release without constructing a stopped model",
+    "SyllableParser::~SyllableParser": "Drain loading and stop learning before member destruction",
+    "ScriptConversion::reset": "Release the converter and invalidate its directory/configuration",
+    "SettingsConfig::prepare_runtime_settings": "Rebind the configuration store and shared connection at startup",
+    "coral::runtime::runtime_generation": "Process-local monotonic successful-start identity",
+    "LocalSessionPort": "Bind one runtime generation and prevent stale sessions or owners from acting on replacements"
+  },
+  "retained": [
+    "Dictionary query, ranking, correction, learning and codec algorithms",
+    "Dictionary and language model file formats",
+    "CSW4 protocol and its host/session generation fields",
+    "Internal compatibility singleton accessors",
+    "Existing Windows resource object naming and initialization policy"
+  ],
+  "remaining": [
+    "Production host session ownership and interruptible pipe shutdown",
+    "Real cross-process host reconnect and normal stop verification",
+    "Full clipboard and UI lifecycle",
+    "Remaining historical internal names and dependency injection"
+  ],
+  "provenance": "Lifecycle changes do not establish independent dictionary algorithm provenance; existing author and license notices retained."
+}

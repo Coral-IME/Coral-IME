@@ -1,0 +1,5 @@
+add_library(coral_service_launch STATIC launch_request.cpp windows_launch_actions.cpp)
+add_library(coral::service_launch ALIAS coral_service_launch)
+target_include_directories(coral_service_launch PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(coral_service_launch PUBLIC coral::product_identity PRIVATE Userenv Advapi32 Wtsapi32)
+coral_target_common(coral_service_launch)

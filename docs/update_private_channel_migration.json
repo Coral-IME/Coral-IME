@@ -1,0 +1,31 @@
+{
+  "batch": "6E2",
+  "date": "2026-10-14",
+  "paths": {
+    "apps/update_agent/download_worker.cpp": null,
+    "apps/update_agent/download_worker.h": null
+  },
+  "replacements": {
+    "DownloadWorker": "DownloadActions + execute_download + AgentActions",
+    "global events/shared int progress": "CUP1 + UpdateProcess + InheritedUpdateChannel",
+    "update-specific old network tasks": "UpdateHttp + owned MetadataRequest"
+  },
+  "new_paths": [
+    "include/coral/updates/download_wire.h",
+    "modules/updates/download_wire.cpp",
+    "include/coral/updates/download_job.h",
+    "modules/updates/download_job.cpp",
+    "platform/windows/update_delivery/update_process.h",
+    "platform/windows/update_delivery/update_process.cpp",
+    "platform/windows/update_delivery/update_http.h",
+    "platform/windows/update_delivery/update_http.cpp",
+    "apps/update_agent/agent_actions.h",
+    "apps/update_agent/agent_actions.cpp"
+  ],
+  "classification": {
+    "rewritten": "single pinned request workflow, private IPC, owned process/job and bounded update HTTP",
+    "retained": "dictionary, third party, TSF, UI rendering/layout and existing service routes",
+    "ui_adaptation": "updatewindow.cpp/.h only communication ownership and progress callbacks",
+    "deferred": "real HTTPS, installer, publisher authenticity and verify-to-Shell path gap"
+  }
+}

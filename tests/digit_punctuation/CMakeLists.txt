@@ -1,0 +1,13 @@
+cmake_minimum_required(VERSION 3.21)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    project(digit_punctuation_tests LANGUAGES CXX)
+    enable_testing()
+endif()
+add_executable(digit_punctuation_test digit_punctuation_test.cpp)
+target_compile_features(digit_punctuation_test PRIVATE cxx_std_17)
+target_include_directories(digit_punctuation_test PRIVATE
+    ../../src/platform/windows/coraltsf/src)
+if(MSVC)
+    target_compile_options(digit_punctuation_test PRIVATE /utf-8)
+endif()
+add_test(NAME digit_punctuation COMMAND digit_punctuation_test)

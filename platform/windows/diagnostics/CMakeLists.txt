@@ -1,0 +1,5 @@
+add_library(coral_diagnostics STATIC crash_request.cpp crash_request.h crash_reporter.cpp crash_reporter.h)
+add_library(coral::diagnostics ALIAS coral_diagnostics)
+target_include_directories(coral_diagnostics PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(coral_diagnostics PUBLIC coral::product_identity)
+coral_target_common(coral_diagnostics)

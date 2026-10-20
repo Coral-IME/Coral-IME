@@ -1,0 +1,5 @@
+add_executable(coral_diagnostic_collector WIN32 collector_entry.cpp)
+target_link_libraries(coral_diagnostic_collector PRIVATE coral::diagnostics coral_archive Bcrypt)
+target_link_options(coral_diagnostic_collector PRIVATE /ENTRY:wmainCRTStartup)
+coral_target_common(coral_diagnostic_collector)
+coral_product_output(coral_diagnostic_collector CORAL_ID_DIAGNOSTIC_EXE)

@@ -1,0 +1,5 @@
+add_library(coral_update_delivery STATIC package_acceptance.cpp package_acceptance.h update_process.cpp update_process.h update_http.cpp update_http.h)
+add_library(coral::update_delivery ALIAS coral_update_delivery)
+target_include_directories(coral_update_delivery PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} PRIVATE ${CMAKE_SOURCE_DIR}/src/common)
+target_link_libraries(coral_update_delivery PUBLIC coral::updates PRIVATE coral_preferences Bcrypt libcurl_static)
+coral_target_common(coral_update_delivery)

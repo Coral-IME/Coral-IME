@@ -1,0 +1,5 @@
+#include "resource.h"
+
+// ID 值最小的图标排在最前，以确保应用程序图标
+// 在所有系统上保持一致。
+IDI_CORAL_ICON ICON "../../../src/platform/windows/coralpinyin/res/coral_logo.ico"

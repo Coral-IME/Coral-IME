@@ -1,0 +1,47 @@
+{
+  "format_version": 1,
+  "batch": "5B2b2",
+  "paths_moved": {},
+  "removed_unused": [
+    "modules/runtime/session_host_adapter.h",
+    "modules/runtime/session_host_adapter.cpp"
+  ],
+  "rewritten_boundaries": [
+    "platform/windows/session_host/host_main.cpp: HostRouter session/process ownership, active requests, capacity and reaping",
+    "platform/windows/session_host/host_main.cpp: fixed workers, overlapped I/O and stop-event lifetime",
+    "platform/windows/session_host/pipe_session_client.cpp: preserve session host generation and recover handshake after replacement",
+    "platform/windows/session_host/session_endpoint.h: shared object naming and opt-in test isolation"
+  ],
+  "limits": {
+    "worker_slots": 8,
+    "sessions_per_process_and_client": 64,
+    "total_sessions": 256,
+    "read_write_and_peer_close_timeout_ms": 2000,
+    "reap_poll_ms": 250
+  },
+  "retained": [
+    "CSW4 version, envelope and payload encoding",
+    "Dictionary query, ranking, correction, learning and file codecs",
+    "Existing AppContainer/Search package pipe access construction",
+    "Default Windows session pipe and startup lock prefixes",
+    "Input timing and crash reporting integration"
+  ],
+  "remaining": [
+    "Full TSF focus and composition integration verification",
+    "Actual Search/AppContainer host access verification",
+    "Special-input, clipboard and UI lifetime",
+    "Windows product identity and internal naming migration",
+    "Final per-file similarity review and clean build",
+    "TSF coordinator recovery and retry policy integration verification"
+  ],
+  "provenance": "New lifecycle and routing implementation; retained security integration and dictionary algorithms are recorded separately. Renaming does not establish independent algorithm provenance.",
+  "client_lease_release": {
+    "operation": "CloseSession",
+    "session_id": 0,
+    "session_generation": 0,
+    "scope": "Actual pipe process and client_id, validated server generation",
+    "transport_budget_ms": 100,
+    "extra_best_effort_cancel_budget_ms": 15,
+    "compatibility": "New semantic on existing CSW4 fields; paired host/client update required. Public close_session(0) remains a no-op."
+  }
+}

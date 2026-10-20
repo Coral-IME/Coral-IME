@@ -1,0 +1,5 @@
+add_executable(coral_speech_probe main.cpp)
+target_link_libraries(coral_speech_probe PRIVATE coral::speech)
+if(MSVC)
+    target_compile_options(coral_speech_probe PRIVATE /utf-8)
+endif()

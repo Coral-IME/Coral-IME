@@ -1,0 +1,31 @@
+{
+  "batch": "6A",
+  "date": "2026-10-14",
+  "classification": "Rewrite platform session coordination and migrate naming; retain dictionary algorithms and TSF launcher",
+  "paths": {
+    "src/platform/windows/coraltsf/src/enginecoordinator.h": "platform/windows/text_service/session_bridge.h",
+    "src/platform/windows/coraltsf/src/enginecoordinator.cpp": "platform/windows/text_service/session_bridge.cpp"
+  },
+  "symbols": {
+    "coral::tsf::EngineCoordinator": "coral::text_service::SessionBridge",
+    "coral::tsf::CandidateDataSource": "coral::text_service::CandidateProvider",
+    "coral::tsf::CandidateQuery": "coral::text_service::CandidateLookup",
+    "coral::tsf::CandidateViewSnapshot": "coral::text_service::CandidateSnapshot",
+    "SharedEngineCoordinator": "shared_session_bridge",
+    "createSession": "create_session",
+    "destroySession": "destroy_session",
+    "updateConfig": "apply_settings",
+    "updateLexicon": "refresh_lexicon",
+    "revertLastAction": "revert_last_action",
+    "clearCache": "clear_cache",
+    "setCandidateDataSource": "set_candidate_provider",
+    "pageSize": "page_size (lookup field only)",
+    "hasMore": "has_more (candidate snapshot field only)",
+    "displayTexts": "display_texts",
+    "m_engineCoordinator": "session_bridge_"
+  },
+  "removed_unused": ["CandidateDataSource::queryIfCurrent"],
+  "rewritten": ["factory-injected connection ownership", "shared bounded recovery budget", "no ambiguous mutation replay", "confirmed settings revision cache", "transactional candidate snapshot"],
+  "retained": ["existing TSF host launcher", "COM ABI and UI candidate version checks", "pipe contract and transport", "dictionary and model algorithms/formats"],
+  "remaining": ["product identity consolidation", "launcher and other Windows modules", "COM focus/composition and special input lifecycle", "actual Search/AppContainer", "final per-file review and clean build"]
+}

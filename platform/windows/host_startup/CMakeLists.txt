@@ -1,0 +1,5 @@
+add_library(coral_host_bootstrap STATIC host_bootstrap.cpp windows_host_bootstrap.cpp)
+add_library(coral::host_bootstrap ALIAS coral_host_bootstrap)
+target_include_directories(coral_host_bootstrap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(coral_host_bootstrap PUBLIC coral::product_identity PRIVATE coral::pipe_session_client Advapi32)
+coral_target_common(coral_host_bootstrap)

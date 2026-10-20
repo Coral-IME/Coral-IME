@@ -1,0 +1,4 @@
+search_word,display_word,frequency,can_split
+hello,hello,10000,1
+world,world,9000,1
+coral,coral,8000,1

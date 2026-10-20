@@ -1,0 +1,6 @@
+add_executable(coral_host_bootstrap_test host_bootstrap_test.cpp)
+target_link_libraries(coral_host_bootstrap_test PRIVATE coral::host_bootstrap)
+coral_target_common(coral_host_bootstrap_test)
+add_test(NAME host_bootstrap COMMAND coral_host_bootstrap_test)
+add_test(NAME product_identity_bindings COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/checks/product_identity.py)
+set_tests_properties(host_bootstrap product_identity_bindings PROPERTIES TIMEOUT 15)

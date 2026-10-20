@@ -1,0 +1,32 @@
+{
+  "batch": "6E1",
+  "date": "2026-10-14",
+  "paths": {
+    "src/platform/windows/coralpinyinupdate/CMakeLists.txt": "apps/update_agent/CMakeLists.txt",
+    "src/platform/windows/coralpinyinupdate/src/main.cpp": "apps/update_agent/update_agent_entry.cpp",
+    "src/platform/windows/coralpinyinupdate/src/core/updatemanager.cpp": "apps/update_agent/download_worker.cpp",
+    "src/platform/windows/coralpinyinupdate/src/core/updatemanager.h": "apps/update_agent/download_worker.h",
+    "src/platform/windows/coralpinyinupdate/pch.h": null,
+    "src/platform/windows/coralpinyin/src/ui/updatecontroller.cpp": "apps/settings_app/update_coordinator.cpp",
+    "src/platform/windows/coralpinyin/src/ui/updatecontroller.h": "apps/settings_app/update_coordinator.h"
+  },
+  "symbols": {
+    "UpdateManager": "coral::updates::DownloadWorker",
+    "UpdateController": "coral::updates::UpdateCoordinator",
+    "UpdateInfo": "coral::updates::ReleaseMetadata",
+    "getInstance": "instance (coordinator only)",
+    "isVersionNewer": "is_newer_version",
+    "parseUpdateInfo": "parse_release_metadata",
+    "sha256Hex/calculateFileHashSHA256": "verify_package/publish_package",
+    "getCurrentVersion": "read_running_package_version",
+    "startDownLoad": "start_download",
+    "onDownloadFinish": "on_download_finished",
+    "deleteInstalledExe": "removed: existing packages preserved",
+    "coralpinyinupdate (CMake target)": "coral_update_agent"
+  },
+  "rewritten": ["typed canonical version and strict bounded UTF-8 metadata acceptance", "same-handle SHA256/size verification and non-replacing publication", "pre-install package verification", "default-disabled configurable update service gate"],
+  "integrated": ["callbacks waited before IPC teardown and pending-file cleanup", "worker destroyed before logging shutdown", "explicit quoted absolute downloader launch", "progress/success only after publication"],
+  "retained": ["existing window/view classes and layout", "network request/download flow and coralnet", "event names/shared int IPC/close polling", "singleton coordinator and existing UI dispatch", "product EXE name", "installed package metadata reader", "dictionary algorithms and formats", "third-party provenance"],
+  "remaining": ["E2 update request/version correlation and IPC authorization", "actual configured service requests and bounded cancellation", "signer/source authenticity and final launch identity binding", "non-UI remaining per-file review and clean build"],
+  "excluded_by_maintainer": ["UI redesign/dedup and full lifecycle", "deep TSF and focus/Search/AppContainer runtime work"]
+}

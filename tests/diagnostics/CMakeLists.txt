@@ -1,0 +1,20 @@
+add_executable(coral_crash_request_test crash_request_test.cpp)
+target_link_libraries(coral_crash_request_test PRIVATE coral::diagnostics)
+coral_target_common(coral_crash_request_test)
+add_test(NAME diagnostic_request COMMAND coral_crash_request_test)
+
+add_executable(coral_diagnostic_probe diagnostic_probe.cpp)
+target_link_libraries(coral_diagnostic_probe PRIVATE coral::diagnostics)
+coral_target_common(coral_diagnostic_probe)
+if(CMAKE_CL_64)
+    set(diagnostic_tsf_target coraltsf64)
+else()
+    set(diagnostic_tsf_target coraltsf32)
+endif()
+add_dependencies(coral_diagnostic_probe coral_diagnostic_collector ${diagnostic_tsf_target})
+add_test(NAME diagnostic_process COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/check_diagnostics.py
+    --probe $<TARGET_FILE:coral_diagnostic_probe> --collector $<TARGET_FILE:coral_diagnostic_collector>
+    --root ${CMAKE_BINARY_DIR}/test-users/diagnostic-$<CONFIG>)
+add_test(NAME tsf_filter_ownership COMMAND coral_diagnostic_probe tsf_filter $<TARGET_FILE:${diagnostic_tsf_target}>)
+set_tests_properties(diagnostic_request tsf_filter_ownership PROPERTIES TIMEOUT 15)
+set_tests_properties(diagnostic_process PROPERTIES TIMEOUT 60)

@@ -1,0 +1,4 @@
+#include "resource.h"
+
+// The lowest icon ID remains the application icon.
+IDI_PINYIN ICON "@CORAL_SERVICE_ICON@"

@@ -1,0 +1,61 @@
+cmake_minimum_required(VERSION 3.21)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    project(candidate_font_tests LANGUAGES CXX)
+    enable_testing()
+endif()
+add_executable(candidate_font_test candidate_font_test.cpp)
+target_compile_features(candidate_font_test PRIVATE cxx_std_17)
+target_include_directories(candidate_font_test PRIVATE
+    ../../src/platform/windows/coralpinyin/src/ui
+    ../../modules/foundation
+    ../../src/lib/opencc/deps/rapidjson-1.1.0)
+target_compile_definitions(candidate_font_test PRIVATE UNICODE _UNICODE NOMINMAX)
+if(MSVC)
+    target_compile_options(candidate_font_test PRIVATE /utf-8)
+endif()
+target_link_libraries(candidate_font_test PRIVATE user32 gdi32)
+add_test(NAME candidate_font COMMAND candidate_font_test)
+
+if(TARGET coralpinyin)
+    # Exercise the actual settings window with uninitialized preferences:
+    # no installed INI, shared-memory channel, engine or clipboard listener.
+    get_target_property(_settings_sources coralpinyin SOURCES)
+    set(_settings_test_sources)
+    foreach(_source IN LISTS _settings_sources)
+        if(_source MATCHES "(src/main.cpp|src/ui/settingswindow.cpp|pch.cpp)$")
+            continue()
+        endif()
+        if(NOT IS_ABSOLUTE "${_source}")
+            set(_source "${CMAKE_SOURCE_DIR}/src/platform/windows/coralpinyin/${_source}")
+        endif()
+        list(APPEND _settings_test_sources "${_source}")
+    endforeach()
+    add_executable(settings_dpi_test settings_dpi_test.cpp ${_settings_test_sources})
+    foreach(_property INCLUDE_DIRECTORIES COMPILE_DEFINITIONS LINK_LIBRARIES)
+        get_target_property(_value coralpinyin ${_property})
+        set_property(TARGET settings_dpi_test PROPERTY ${_property} "${_value}")
+    endforeach()
+    target_precompile_headers(settings_dpi_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/coralpinyin/pch.h")
+    coral_target_common(settings_dpi_test)
+    add_test(NAME settings_dpi COMMAND settings_dpi_test
+        "${CMAKE_CURRENT_BINARY_DIR}/dpi-renders")
+endif()
+
+if(TARGET coral_candidate_view)
+    add_executable(candidate_backdrop_test candidate_backdrop_test.cpp)
+    target_compile_definitions(candidate_backdrop_test PRIVATE UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(candidate_backdrop_test PRIVATE coral_candidate_view coral_candidate_backdrop)
+    coral_target_common(candidate_backdrop_test)
+    add_test(NAME candidate_backdrop COMMAND candidate_backdrop_test)
+
+    add_executable(skin_crop_opacity_test skin_crop_opacity_test.cpp)
+    target_include_directories(skin_crop_opacity_test PRIVATE support)
+    target_compile_definitions(skin_crop_opacity_test PRIVATE UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(skin_crop_opacity_test PRIVATE coral_candidate_view Dwmapi)
+    if(MSVC)
+        target_compile_options(skin_crop_opacity_test PRIVATE /utf-8)
+    endif()
+    add_test(NAME skin_crop_opacity COMMAND skin_crop_opacity_test
+        "${CMAKE_CURRENT_BINARY_DIR}/opacity-renders")
+endif()

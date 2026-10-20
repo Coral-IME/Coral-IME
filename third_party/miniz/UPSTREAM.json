@@ -1,0 +1,67 @@
+{
+  "version": "3.1.2",
+  "commit": "77d0dce8627735138c51770d1799a1ef48f2117d",
+  "upstream": "https://github.com/richgel999/miniz",
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "0115478d567121238cf6cc1c0c361926cf07a49d9e4c9e66da97fac6a01646b3",
+      "bytes": 1184,
+      "url": "https://raw.githubusercontent.com/richgel999/miniz/77d0dce8627735138c51770d1799a1ef48f2117d/LICENSE"
+    },
+    {
+      "path": "miniz.c",
+      "sha256": "f23204efee2bfaffb72a974d2e28c64c3c1d9787144b5c5890f129c465e467bd",
+      "bytes": 25991,
+      "url": "https://raw.githubusercontent.com/richgel999/miniz/77d0dce8627735138c51770d1799a1ef48f2117d/miniz.c"
+    },
+    {
+      "path": "miniz.h",
+      "sha256": "f0b67217bdd8e45b74eb9b7c2c7ae20ed6760a1d76f3276b93617039ebd082df",
+      "bytes": 28290,
+      "url": "https://raw.githubusercontent.com/richgel999/miniz/77d0dce8627735138c51770d1799a1ef48f2117d/miniz.h"
+    },
+    {
+      "path": "miniz_common.h",
+      "sha256": "f1ba29821c8caef83585b328196aa346c5da7c82890a70a3d10d77c6cec0ed39",
+      "bytes": 2529,
+      "url": "https://raw.githubusercontent.com/richgel999/miniz/77d0dce8627735138c51770d1799a1ef48f2117d/miniz_common.h"
+    },
+    {
+      "path": "miniz_tdef.c",
+      "sha256": "85b93205232d51d092f24041934d951f11f9edc02df1f475e8ceb7b281a1e7f6",
+      "bytes": 75526,
+      "url": "https://raw.githubusercontent.com/richgel999/miniz/77d0dce8627735138c51770d1799a1ef48f2117d/miniz_tdef.c"
+    },
+    {
+      "path": "miniz_tdef.h",
+      "sha256": "d62da02953c3834dfcbde4db026c6d9345013ef9b0e53185131016a3a4e48c33",
+      "bytes": 10733,
+      "url": "https://raw.githubusercontent.com/richgel999/miniz/77d0dce8627735138c51770d1799a1ef48f2117d/miniz_tdef.h"
+    },
+    {
+      "path": "miniz_tinfl.c",
+      "sha256": "2296ebd21ef9af5ebbefd5b454d4bb67d8fb4af2d24945e7fb32114374f75a76",
+      "bytes": 40637,
+      "url": "https://raw.githubusercontent.com/richgel999/miniz/77d0dce8627735138c51770d1799a1ef48f2117d/miniz_tinfl.c"
+    },
+    {
+      "path": "miniz_tinfl.h",
+      "sha256": "da4850920fdf09f8877d9affabe1ebba1852ce4b1ebbd121f2ba7a7ea8e57e5d",
+      "bytes": 8695,
+      "url": "https://raw.githubusercontent.com/richgel999/miniz/77d0dce8627735138c51770d1799a1ef48f2117d/miniz_tinfl.h"
+    },
+    {
+      "path": "miniz_zip.c",
+      "sha256": "b70e502c425e2a31146178c1466dccaf1874390009950774be2be9bd4ec908a9",
+      "bytes": 208249,
+      "url": "https://raw.githubusercontent.com/richgel999/miniz/77d0dce8627735138c51770d1799a1ef48f2117d/miniz_zip.c"
+    },
+    {
+      "path": "miniz_zip.h",
+      "sha256": "b062a5def545445c73fd1d664e35a89165dfb0d996ab848f507244e819cfcf04",
+      "bytes": 26742,
+      "url": "https://raw.githubusercontent.com/richgel999/miniz/77d0dce8627735138c51770d1799a1ef48f2117d/miniz_zip.h"
+    }
+  ]
+}

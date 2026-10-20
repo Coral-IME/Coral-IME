@@ -1,0 +1,86 @@
+{
+  "paths": {
+    "src/platform/windows/engine_host/CMakeLists.txt": "platform/windows/session_host/CMakeLists.txt",
+    "src/platform/windows/engine_host/dumpexceptionhandler.hpp": "platform/windows/session_host/host_crash_report.hpp",
+    "src/platform/windows/engine_host/engine_host.rc": "platform/windows/session_host/engine_host.rc",
+    "src/platform/windows/engine_host/engine_protocol.cpp": "modules/transport/session_wire.cpp",
+    "src/platform/windows/engine_host/engine_protocol.h": "include/coral/transport/session_wire.h",
+    "src/platform/windows/engine_host/main.cpp": "platform/windows/session_host/host_main.cpp",
+    "src/platform/windows/engine_host/remote_engine_port.cpp": "platform/windows/session_host/pipe_session_client.cpp",
+    "src/platform/windows/engine_host/remote_engine_port.h": "platform/windows/session_host/pipe_session_client.h",
+    "src/platform/windows/engine_host/resource.h": "platform/windows/session_host/resource.h",
+    "tests/engine_protocol/engine_protocol_v1_test.cpp": "tests/session_wire/session_wire_test.cpp",
+    "tests/engine_protocol/remote_engine_port_test.cpp": "tests/session_wire/pipe_session_client_test.cpp",
+    "tests/engine_protocol/engine_host_client_smoke.cpp": "tests/session_wire/session_host_smoke.cpp",
+    "tests/engine_protocol/CMakeLists.txt": "tests/session_wire/CMakeLists.txt"
+  },
+  "symbols": {
+    "engine_ipc": "transport",
+    "MessageType": "SessionOperation",
+    "EncodeRequest": "encode_request",
+    "DecodeRequest": "decode_request",
+    "EncodeResponse": "encode_reply",
+    "DecodeResponse": "decode_reply",
+    "IsDeadlineExpired": "deadline_expired",
+    "DefaultEnginePipeName": "default_session_pipe",
+    "CreateRemoteEnginePort": "make_pipe_session_client",
+    "RemoteEnginePort": "PipeSessionClient",
+    "Request": "SessionRequest",
+    "Response": "SessionReply",
+    "FrameHeader": "Removed: explicit 72-byte envelope; kEnvelopeBytes replaces sizeof(FrameHeader)"
+  },
+  "request_fields": {
+    "type": "operation",
+    "requestId": "request_id",
+    "sessionId": "session_id",
+    "sessionGeneration": "session_generation",
+    "serverGeneration": "server_generation",
+    "clientId": "client_id",
+    "deadlineTickMs": "deadline_tick_ms",
+    "cancelRequestId": "cancel_request_id",
+    "keyEvent": "key_event",
+    "inputContext": "input_context",
+    "pageSize": "page_size",
+    "candidateIndex": "candidate_index",
+    "conditionId": "condition_id",
+    "candidateAction": "candidate_action"
+  },
+  "operations": {
+    "Hello": "kHello",
+    "OpenSession": "kOpenSession",
+    "CloseSession": "kCloseSession",
+    "SendKey": "kSendKey",
+    "ParseFull": "kParseFull",
+    "SelectCandidate": "kSelectCandidate",
+    "ResetSession": "kResetSession",
+    "FlushUserHistory": "kFlushUserHistory",
+    "Cancel": "kCancel",
+    "Ping": "kPing",
+    "RecordSelected": "kRecordSelected",
+    "RevertLastAction": "kRevertLastAction",
+    "ApplyCandidateAction": "kApplyCandidateAction",
+    "ClearCache": "kClearCache",
+    "UpdateLexicon": "kUpdateLexicon",
+    "UpdateConfig": "kUpdateConfig"
+  },
+  "format_version": 1,
+  "batch": "5A",
+  "rewritten": [
+    "modules/transport/session_wire.cpp"
+  ],
+  "retained_implementations": [
+    "Windows pipe I/O, host dispatch and cancellation; moved and adapted",
+    "EnginePort/EngineResponse, legacy DLL API and composition lifecycle pending batch 5B",
+    "Dictionary algorithms, model/lexicon formats and formal data unchanged"
+  ],
+  "wire": {
+    "magic": "CSW4",
+    "version": 4,
+    "envelope_bytes": 72,
+    "byte_order": "little endian",
+    "max_payload_bytes": 1048576
+  },
+  "inherited_api_exception": "EnginePort override methods and nested EngineResponse/KeyEvent/config fields keep existing names until batch 5B",
+  "product_exception": "coral_engine_host executable and existing resource identifier remain stable until Windows application batch",
+  "license": "Existing license and author notices retained; rewrites do not establish clean-room provenance"
+}

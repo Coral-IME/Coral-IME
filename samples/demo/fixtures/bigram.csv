@@ -1,0 +1,6 @@
+prev_word,next_word,log_probability
+你,好,-0.2
+你好,世界,-0.2
+中,国,-0.2
+汉,语,-0.2
+珊瑚,拼音,-0.2

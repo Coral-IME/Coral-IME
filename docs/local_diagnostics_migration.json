@@ -1,0 +1,32 @@
+{
+  "batch": "6D",
+  "date": "2026-10-14",
+  "paths": {
+    "platform/windows/session_host/host_crash_report.hpp": "platform/windows/diagnostics/crash_reporter.cpp",
+    "src/platform/windows/coralpinyin/src/utils/dumpexceptionhandler.hpp": "platform/windows/diagnostics/crash_reporter.cpp",
+    "src/platform/windows/coralpinyinupdate/src/core/dumpexceptionhandler.hpp": "platform/windows/diagnostics/crash_reporter.cpp",
+    "src/platform/windows/coraltsf/src/utils/dumpexceptionhandler.hpp": null,
+    "src/dump/CMakeLists.txt": "apps/diagnostic_collector/CMakeLists.txt",
+    "src/dump/src/main.cpp": "apps/diagnostic_collector/collector_entry.cpp",
+    "src/dump/src/crashhandle.cpp": "apps/diagnostic_collector/collector_entry.cpp",
+    "src/dump/src/crashhandle.h": "platform/windows/diagnostics/crash_request.h",
+    "src/dump/src/uploader.cpp": null,
+    "src/dump/src/uploader.h": null,
+    "src/dump/pch.cpp": null,
+    "src/dump/pch.h": null
+  },
+  "symbols": {
+    "EngineHostDumpHandler::install": "coral::diagnostics::install_crash_reporter",
+    "DumpExceptionHandler::SehHandler": "coral::diagnostics::report_fault (private)",
+    "CoraltsfDumpHandler::install": "removed: host owns process filter",
+    "DumpExceptionHandler::startCheckAutoUploadDump": "removed",
+    "Dumper::dumpAndSend": "coral::diagnostics::collect_report (private, local only)",
+    "Dumper::isNeedDump": "removed: no registry throttling or upload state",
+    "Uploader::uploadDump": "removed",
+    "coralcrashdump (CMake target)": "coral_diagnostic_collector"
+  },
+  "rewritten": ["strict versioned argument contract", "fixed-buffer owned-process fault launcher", "unique local dump/manifest/archive collector"],
+  "removed": ["TSF process filter takeover", "automatic upload and detached retry", "hardware identity and MD5 dependency in collector", "existing log attachments", "old report scan/delete", "failure fallback to successful snapshot"],
+  "retained": ["product artifact name", "Windows fault and MiniDump APIs", "existing ZIP library and attribution", "dictionary algorithms and formats"],
+  "remaining": ["manual upload and report management UI", "corrupt heap/stack and cross-architecture capture runtime", "actual application focus and Search/AppContainer", "settings/update/renderer and other platform migrations", "final per-file review and clean build"]
+}

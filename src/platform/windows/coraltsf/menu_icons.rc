@@ -1,0 +1,7 @@
+#include "resource.h"
+
+IDB_MENU_HIDE_TOOLBAR      ICON "res\\contextmenu\\hide_toolbar.ico"
+IDB_MENU_CUSTOMIZE_TOOLBAR ICON "res\\contextmenu\\customize_toolbar.ico"
+IDB_MENU_SETTINGS          ICON "res\\contextmenu\\settings.ico"
+IDB_MENU_ABOUT             ICON "res\\contextmenu\\about.ico"
+IDB_MENU_FEEDBACK          ICON "res\\contextmenu\\feedback.ico"

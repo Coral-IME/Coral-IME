@@ -1,0 +1,5 @@
+add_executable(coral_session_bridge_test session_bridge_test.cpp)
+target_link_libraries(coral_session_bridge_test PRIVATE coral::session_bridge)
+coral_target_common(coral_session_bridge_test)
+add_test(NAME text_service_session_bridge COMMAND coral_session_bridge_test)
+set_tests_properties(text_service_session_bridge PROPERTIES TIMEOUT 15)

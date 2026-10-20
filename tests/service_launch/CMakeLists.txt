@@ -1,0 +1,10 @@
+add_executable(coral_service_launch_test launch_request_test.cpp)
+target_link_libraries(coral_service_launch_test PRIVATE coral::service_launch)
+coral_target_common(coral_service_launch_test)
+add_test(NAME service_launch_policy COMMAND coral_service_launch_test)
+
+add_executable(coral_launch_rpc_test launch_rpc_test.cpp)
+target_link_libraries(coral_launch_rpc_test PRIVATE coral::launch_rpc)
+coral_target_common(coral_launch_rpc_test)
+add_test(NAME service_launch_rpc COMMAND coral_launch_rpc_test)
+set_tests_properties(service_launch_policy service_launch_rpc PROPERTIES TIMEOUT 25)

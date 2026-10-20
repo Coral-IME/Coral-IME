@@ -1,0 +1,12 @@
+add_executable(foundation_contract_test foundation_contract_test.cpp)
+target_compile_features(foundation_contract_test PRIVATE cxx_std_17)
+target_link_libraries(foundation_contract_test PRIVATE coral_foundation)
+target_include_directories(foundation_contract_test PRIVATE ../../modules/preferences)
+coral_target_common(foundation_contract_test)
+add_test(NAME foundation_contract COMMAND foundation_contract_test)
+
+add_executable(background_tasks_test background_tasks_test.cpp)
+target_link_libraries(background_tasks_test PRIVATE coral_foundation)
+coral_target_common(background_tasks_test)
+add_test(NAME background_tasks COMMAND background_tasks_test)
+set_tests_properties(background_tasks PROPERTIES TIMEOUT 30)

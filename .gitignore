@@ -1,0 +1,24 @@
+# Public candidate outputs/local configuration
+build/
+build-*/
+out/
+.vs/
+.vscode/
+.idea/
+__pycache__/
+*.pyc
+CMakeUserPresets.json
+*.log
+*.tmp
+*.bak
+*.pdb
+*.obj
+*.aps
+*.pfx
+*.p12
+*.pvk
+*.key
+private-data/
+corpora/
+.rundata/
+.release-work/

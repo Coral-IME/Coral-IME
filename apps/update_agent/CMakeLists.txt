@@ -1,0 +1,6 @@
+add_executable(coral_update_agent WIN32 update_agent_entry.cpp agent_actions.cpp agent_actions.h)
+target_link_libraries(coral_update_agent PRIVATE coral::update_delivery coral::diagnostics)
+target_compile_definitions(coral_update_agent PRIVATE OS_WINDOW _UNICODE UNICODE)
+target_link_options(coral_update_agent PRIVATE /ENTRY:wmainCRTStartup)
+coral_target_common(coral_update_agent)
+coral_product_output(coral_update_agent CORAL_ID_UPDATE_EXE)

@@ -1,0 +1,96 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Visual Studio 16 2019",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "win-x64-debug",
+      "displayName": "Windows x64 Debug",
+      "inherits": "base",
+      "architecture": "x64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "win-x64-release",
+      "displayName": "Windows x64 Release",
+      "inherits": "base",
+      "architecture": "x64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "win-x86-debug",
+      "displayName": "Windows x86 Debug",
+      "inherits": "base",
+      "architecture": "Win32",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "win-x86-release",
+      "displayName": "Windows x86 Release",
+      "inherits": "base",
+      "architecture": "Win32",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "win-x64-debug",
+      "configurePreset": "win-x64-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "win-x64-release",
+      "configurePreset": "win-x64-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "win-x86-debug",
+      "configurePreset": "win-x86-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "win-x86-release",
+      "configurePreset": "win-x86-release",
+      "configuration": "Release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "win-x64-debug",
+      "displayName": "Regression (Debug)",
+      "configurePreset": "win-x64-debug",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "win-x64-release",
+      "configurePreset": "win-x64-release",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

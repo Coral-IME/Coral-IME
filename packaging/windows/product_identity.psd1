@@ -1,0 +1,23 @@
+# Generated product identity; edit resources/product_identity.json.
+@{
+    settings_exe = 'coralpinyin.exe'
+    update_exe = 'coralpinyinupdate.exe'
+    diagnostic_exe = 'coralcrashdump.exe'
+    service_exe = 'coralpinyinsvc.exe'
+    session_host_exe = 'coral_engine_host.exe'
+    renderer_exe = 'coral_renderer.exe'
+    tsf_x64_dll = 'coraltsf64.dll'
+    tsf_x86_dll = 'coraltsf32.dll'
+    service_name = 'coralpinyinsvc'
+    service_bridge = '_#_coralpinyin_service_bridge_#_'
+    app_registry = 'SOFTWARE\coral\HermesIME\engine\app'
+    settings_registry = 'SOFTWARE\coral\HermesIME\settingsconfig'
+    launcher_registry = 'SOFTWARE\coralpinyin'
+    install_path_value = 'InstallPath'
+    installation_mutex = 'CoralPinyinInstalling'
+    session_pipe_prefix = 'CoralPinyin.Session.v4.'
+    session_mutex_prefix = 'CoralPinyin.SessionHost.v4.'
+    session_stop_prefix = 'CoralPinyin.SessionHost.Stop.v4.'
+    renderer_pipe_prefix = '\\.\pipe\CoralPinyin.Renderer.v4.'
+    renderer_mutex_prefix = 'Local\CoralPinyin.Renderer.v4.'
+}

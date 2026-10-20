@@ -1,0 +1,106 @@
+{
+  "paths": {
+    "include/coral/composition/engine_gateway.h": "include/coral/composition/session_port.h",
+    "modules/runtime/in_process_engine_port.cpp": "modules/runtime/local_session_port.cpp",
+    "modules/runtime/session_dispatch.h": "modules/runtime/session_host_adapter.h",
+    "modules/runtime/session_dispatch.cpp": "modules/runtime/session_host_adapter.cpp"
+  },
+  "symbols": {
+    "EnginePort": "SessionPort",
+    "EngineResponse": "SessionResult",
+    "EngineStatus": "SessionStatus",
+    "EngineConfigSnapshot": "SessionSettings",
+    "SessionId": "SessionToken",
+    "EngineHost": "SessionHost",
+    "SameEngineConfig": "same_session_settings",
+    "CreateLocalEnginePort": "make_local_session_port",
+    "CreateInitializedLocalEnginePort": "make_initialized_session_port",
+    "CreateSession": "open_session",
+    "DestroySession": "close_session",
+    "SendKey": "send_key",
+    "ParseFull": "query_page",
+    "SelectCandidate": "select_candidate",
+    "ResetSession": "reset_session",
+    "RecordSelected": "record_selection",
+    "RevertLastAction": "revert_selection",
+    "ApplyCandidateAction": "apply_candidate_action",
+    "ClearCache": "clear_cache",
+    "UpdateLexicon": "refresh_lexicon",
+    "UpdateConfig": "apply_settings",
+    "FlushUserHistory": "flush_history",
+    "Healthy": "available"
+  },
+  "fields": {
+    "requestId": "request_id",
+    "sessionId": "session_id",
+    "sessionGeneration": "session_generation",
+    "serverGeneration": "server_generation",
+    "uMode": "u_mode",
+    "vMode": "v_mode",
+    "pinyinCorrection": "pinyin_correction",
+    "fullWidth": "full_width",
+    "traditionalChinese": "traditional_chinese",
+    "showInfos": "show_infos",
+    "limitCount": "limit_count",
+    "combinedLexiconVersion": "combined_lexicon_version",
+    "fuzzyChoice": "fuzzy_choices",
+    "processName": "process_name",
+    "displayText": "display_text",
+    "hasNextPage": "has_next_page",
+    "candidatesVisible": "candidates_visible"
+  },
+  "namespace": {
+    "coral::ime": "coral::composition"
+  },
+  "session_symbols": {
+    "Session": "CompositionSession",
+    "SelectIndex": "select_index",
+    "PageCandidates": "page_candidates",
+    "Reset": "reset",
+    "hasInput": "has_input",
+    "pageSize": "page_size",
+    "setPageSize": "set_page_size"
+  },
+  "status_values": {
+    "Ok": "kOk",
+    "InvalidSession": "kInvalidSession",
+    "Unavailable": "kUnavailable",
+    "Timeout": "kTimeout",
+    "ProtocolError": "kProtocolError",
+    "InternalError": "kInternalError"
+  },
+  "key_values": {
+    "None": "kNone",
+    "Backspace": "kBackspace",
+    "Escape": "kEscape",
+    "Space": "kSpace",
+    "Enter": "kEnter",
+    "Tab": "kTab",
+    "PageUp": "kPageUp",
+    "PageDown": "kPageDown",
+    "Home": "kHome",
+    "End": "kEnd",
+    "Left": "kLeft",
+    "Right": "kRight",
+    "Up": "kUp",
+    "Down": "kDown",
+    "Delete": "kDelete"
+  },
+  "format_version": 1,
+  "batch": "5B1",
+  "rewritten": [
+    "modules/composition/composition_session.cpp",
+    "modules/runtime/local_session_port.cpp"
+  ],
+  "new_adapter": "modules/runtime/candidate_source_bridge.cpp",
+  "wire_formats_preserved": [
+    "CSW4",
+    "renderer existing snapshot/action protocol"
+  ],
+  "settings_adapter": "Empty fuzzy list becomes 19 disabled flags; nonempty lists must contain exactly 19 items.",
+  "legacy_exports": "Existing exports retained; isRuntimeReady readiness probe added. DLL STL ABI remains for batch 5B2.",
+  "retained_algorithms": "Dictionary and model bodies unchanged except documented identifier and include changes.",
+  "remaining_lifecycle": "Process singleton model reconstruction and production host ownership/shutdown deferred to batch 5B2.",
+  "legacy_bridge_exception": "SessionHost remains in coral namespace while the host/DLL wrapper is migrated in B2.",
+  "provenance": "Existing author/license notices retained; state-machine rewrites are not a clean-room provenance claim."
+}

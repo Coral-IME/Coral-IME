@@ -1,0 +1,39 @@
+# 资源与加载生命周期
+
+第四批重写通用资源管理和实际模型加载任务所有权。词典查询、排序、图搜索、评分与编解码算法保持原逻辑；旧 DLL 接口、资源名、MD5 配置和文件格式继续沿用既有边界。
+
+## 只读资源
+
+`coral::storage::VerifiedResource` 持有已校验的连续只读数据。临时租约完成创建、读取和校验后一次性发布，失败自动释放文件、映射、视图与互斥句柄，不暴露半有效指针。
+
+- `load(name, path, checksum, access)` 拒绝空名称、空数据、读取失败、超出地址空间的长度和不匹配校验值。
+- `kCreateOrOpen` 可创建资源；`kOpenExisting` 在 Windows 只打开既有对象。运行边界通过 `resource_access.h` 选择策略，存储层不读取产品设置。
+- 同名称、路径和校验值的请求幂等；持有资源时拒绝不同请求，并保持原数据。切换前先释放借用指针，再 reset。
+- `data()` 返回只读借用指针，`size()` 返回载荷字节数。加载与 reset 串行，状态原子发布；借用指针访问期间仍禁止 reset/销毁，不能跨 reset 持有裸指针。
+- 空校验值继续表示未提供 MD5；模型读取方仍执行原有格式校验。校验算法和字典格式没有更新。
+
+Windows 后端 `platform/windows/named_resource.cpp` 保留 `<name>_Mutex`、`<name>SharedMemory`、八字节长度头及既有低完整性安全属性。每个租约独立持有映射和互斥对象，最后一个租约释放后对象消失。发布者锁最多等待 5 秒；放弃的锁返回失败，不原地修复其他进程的载荷。分块读取全部完成并校验后，才公布长度。
+
+创建已存在的映射会得到其原有大小，所以检查 `ERROR_ALREADY_EXISTS` 并验证既有载荷，不能按新文件大小覆盖。[Windows API 契约](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-createfilemappingw)。映射大小使用高/低两个 DWORD。
+
+POSIX 后端 `platform/posix/file_resource.cpp` 使用只读文件映射、文件描述符和映射租约；不会创建 Windows 命名对象，access 不影响本地文件映射。本次在 Windows 验证，POSIX 运行验收尚未执行。
+
+`ModelView` 持有原有词典视图的 backing resource，模型专用记录和读取算法继续保留。资源 target 为 `coral_resource_io` / `coral::resource_io`；词典/二元表仍随引擎 target 编译。
+
+## 后台加载与关闭
+
+`coral::foundation::BackgroundTasks` 由使用方持有有限批次，不使用全局线程池。start 拒绝无函数体的任务和未回收批次；finish 等待所有任务，汇总 false 和异常，失败也会回收剩余任务。普通对象析构会等待；DLL 宿主必须在卸载前显式 finish。任务不能反过来调用自身 owner 的 start/finish。
+
+模型加载前等待上一批，避免覆盖任务正在读取的路径。关闭顺序：等待实际加载 → 停止学习历史工作 → 停止日志后端 → 返回宿主；关闭可重复。同步初始化报告失败时自动回收后台工作，宿主不必再额外调用关闭来保证该失败路径的卸载。旧兼容 API 仍要求宿主串行管理初始化/关闭、停止请求，不能一边解析一边销毁资源。完整实例重建和多会话并发契约由下一批接口设计处理。
+
+旧通用线程池、LRU 缓存及 `IDataProvider/MappedRegion` 没有使用方，已删除。词典专用 arena、对象池、过滤器和纠错缓存继续保留。
+
+## 验证范围
+
+新增 background_tasks、resource_io、engine_loading、engine_unload 四项回归：任务异常与阻塞、重复批次、资源失败与重试、共享打开、溢出头、放弃/忙锁、句柄回收、并发请求、分块读取、实际异步关闭及真实 DLL 的三轮正常卸载，以及无效模型导致初始化失败后的自动清理/卸载。
+
+DLL 卸载测试只覆盖人工演示初始化与明确关闭。旧测试仍有立即退出策略；特殊输入、剪贴板、UI 和跨进程运行后的完整卸载需专项验收，不能据此承诺所有宿主路径均已解决。
+
+14 个变化的词典调用文件经 token 核对，仅允许资源调用替换、加载/关闭/析构三个生命周期函数和 owned task 成员变化，算法部分保持一致。正式资源与输入质量不在本批验收范围。
+
+第五批 B2b1 更新：核心静态链接，关闭现已销毁实际解析器与模型、释放简繁转换器，重开重新绑定路径；旧端口通过代次失效。前文 DLL 卸载及未支持重建是第四批的历史验收范围；当前规则见 [模型重建](runtime_reconstruction.md)。
