@@ -16,10 +16,8 @@ inline wchar_t DigitFollowingPeriod(bool enabled, bool pendingInput,
         ? L'.' : punctuation;
 }
 
-// 由按键路由与执行共用，使两者识别同一套标点。
-inline wchar_t DigitSeparatorReplacement(wchar_t previous, wchar_t punctuation)
+inline wchar_t english_separator(wchar_t punctuation)
 {
-    if (!IsCommittedDigit(previous)) return L'\0';
     switch (punctuation) {
     case L'：': return L':';
     case L'，': return L',';
@@ -28,28 +26,35 @@ inline wchar_t DigitSeparatorReplacement(wchar_t previous, wchar_t punctuation)
     }
 }
 
+// 由按键路由与执行共用，使两者识别同一套标点。
+inline wchar_t DigitSeparatorReplacement(wchar_t previous, wchar_t punctuation)
+{
+    return IsCommittedDigit(previous) ? english_separator(punctuation) : L'\0';
+}
+
 inline bool is_committed_letter(wchar_t ch)
 {
     return (ch >= L'a' && ch <= L'z') || (ch >= L'A' && ch <= L'Z') ||
         (ch >= L'ａ' && ch <= L'ｚ') || (ch >= L'Ａ' && ch <= L'Ｚ');
 }
 
-inline wchar_t following_period(bool digit_enabled, bool letter_enabled,
-                                bool pending_input, wchar_t previous, wchar_t punctuation)
+// 字母后的分隔符在标点上屏时转换，后续字母继续走正常组串流程。
+inline wchar_t following_punctuation(bool digit_enabled, bool letter_enabled,
+                                    bool pending_input, wchar_t previous, wchar_t punctuation)
 {
-    const bool enabled = (digit_enabled && IsCommittedDigit(previous)) ||
-        (letter_enabled && is_committed_letter(previous));
-    return enabled && !pending_input && punctuation == L'。' ? L'.' : punctuation;
+    if (pending_input) return punctuation;
+    if (letter_enabled && is_committed_letter(previous)) {
+        if (const auto replacement = english_separator(punctuation)) return replacement;
+    }
+    return DigitFollowingPeriod(digit_enabled, false, previous, punctuation);
 }
 
-// 前后两个字符必须都属于启用的类别。
-inline wchar_t separator_replacement(bool digit_enabled, bool letter_enabled,
-                                     wchar_t previous, wchar_t punctuation, wchar_t next)
+// 仅数字之间保留延迟替换，字母键不能触发退格和字符注入。
+inline wchar_t digit_separator_replacement(bool enabled, wchar_t previous,
+                                          wchar_t punctuation, wchar_t next)
 {
-    const bool enabled =
-        (digit_enabled && IsCommittedDigit(previous) && IsCommittedDigit(next)) ||
-        (letter_enabled && is_committed_letter(previous) && is_committed_letter(next));
-    return enabled ? DigitSeparatorReplacement(L'0', punctuation) : L'\0';
+    return enabled && IsCommittedDigit(next)
+        ? DigitSeparatorReplacement(previous, punctuation) : L'\0';
 }
 
 } // 命名空间 coral::tsf 结束

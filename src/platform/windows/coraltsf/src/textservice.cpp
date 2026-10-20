@@ -451,7 +451,7 @@ HRESULT CTextService::handleChinesePunctuation(WPARAM wParam)
 	if (m_pEditMgr && text.GetLength() == 1) {
 		const CString& history = m_pEditMgr->getLastTwoChars();
 		const wchar_t previous = history.IsEmpty() ? L'\0' : history.GetAt(history.GetLength() - 1);
-		text.SetAt(0, coral::tsf::following_period(
+		text.SetAt(0, coral::tsf::following_punctuation(
 			m_configSnapshot->autoConvertDigitSymbol, m_configSnapshot->auto_convert_letter_symbol,
 			m_pCandidateDlg && !m_pCandidateDlg->getPinyin().IsEmpty(), previous, text.GetAt(0)));
 	}
@@ -906,14 +906,13 @@ HRESULT CTextService::invokeKeyHandler(ITfContext* pContext, WPARAM wParam, LPAR
 		}
 	}
 
-	// 数字或字母间符号转换
-	if ((m_configSnapshot->autoConvertDigitSymbol || m_configSnapshot->auto_convert_letter_symbol)
+	// 仅数字间的分隔符需要在后一个数字到来时替换。
+	if (m_configSnapshot->autoConvertDigitSymbol
 		&& !isCandidateVisiable()
 		&& !m_pKeyEventSink->isShiftDown()
 		&& !m_pKeyEventSink->isCtrlDown() && !m_pKeyEventSink->isAltDown()
 		&& !m_pKeyEventSink->isWinDown()
-		&& ((wParam >= '0' && wParam <= '9') || (wParam >= VK_NUMPAD0 && wParam <= VK_NUMPAD9)
-			|| (wParam >= 'A' && wParam <= 'Z')))
+		&& ((wParam >= '0' && wParam <= '9') || (wParam >= VK_NUMPAD0 && wParam <= VK_NUMPAD9)))
 	{
 		WCHAR digitChar = 0;
 		if (wParam >= VK_NUMPAD0 && wParam <= VK_NUMPAD9)
@@ -924,8 +923,6 @@ HRESULT CTextService::invokeKeyHandler(ITfContext* pContext, WPARAM wParam, LPAR
 		else
 		{
 			digitChar = static_cast<WCHAR>(wParam);
-			if (wParam >= 'A' && wParam <= 'Z' && !m_pKeyEventSink->isCapsLockOn())
-				digitChar += L'a' - L'A';
 		}
 
 		if (handle_symbol_conversion(digitChar))
@@ -1600,14 +1597,13 @@ bool CTextService::needs_symbol_conversion(WPARAM wParam) const
 bool CTextService::needs_symbol_conversion(
 	WPARAM wParam, const coral::tsf::ContextState* state) const
 {
-	if (!m_configSnapshot->autoConvertDigitSymbol && !m_configSnapshot->auto_convert_letter_symbol)
+	if (!m_configSnapshot->autoConvertDigitSymbol)
 		return false;
 	if (state && (state->candidates().visible || state->candidateController().isVisible()))
 		return false;
-	if (!((wParam >= '0' && wParam <= '9') || (wParam >= VK_NUMPAD0 && wParam <= VK_NUMPAD9)
-		|| (wParam >= 'A' && wParam <= 'Z')))
+	if (!((wParam >= '0' && wParam <= '9') || (wParam >= VK_NUMPAD0 && wParam <= VK_NUMPAD9)))
 		return false;
-	// 检查已提交的数字/字母与中文符号
+	// 检查已提交的数字与中文符号。
 	if (!state)
 		return false;
 	const CString& lastTwoChars = state->compositionController().getLastTwoChars();
@@ -1617,8 +1613,8 @@ bool CTextService::needs_symbol_conversion(
 	WCHAR secondLastChar = lastTwoChars.GetAt(0);
 	const wchar_t next = wParam >= VK_NUMPAD0 && wParam <= VK_NUMPAD9
 		? static_cast<wchar_t>(L'0' + wParam - VK_NUMPAD0) : static_cast<wchar_t>(wParam);
-	return coral::tsf::separator_replacement(m_configSnapshot->autoConvertDigitSymbol,
-		m_configSnapshot->auto_convert_letter_symbol, secondLastChar, lastChar, next) != L'\0';
+	return coral::tsf::digit_separator_replacement(m_configSnapshot->autoConvertDigitSymbol,
+		secondLastChar, lastChar, next) != L'\0';
 }
 
 // 获取配对符号的右半部分
@@ -3019,7 +3015,7 @@ void CTextService::setNeedSendLeftKey(bool need)
 bool CTextService::handle_symbol_conversion(WCHAR digitChar)
 {
 	// 如果功能未开启，直接返回
-	if (!m_configSnapshot->autoConvertDigitSymbol && !m_configSnapshot->auto_convert_letter_symbol)
+	if (!m_configSnapshot->autoConvertDigitSymbol)
 		return false;
 	// 获取最后2个输入字符
 	if (!m_pEditMgr)
@@ -3030,9 +3026,9 @@ bool CTextService::handle_symbol_conversion(WCHAR digitChar)
 	if (lastTwoChars.GetLength() < 2)
 		return false;
 	WCHAR lastChar = lastTwoChars.GetAt(1);  // 最后一个字符（中文符号）
-	WCHAR secondLastChar = lastTwoChars.GetAt(0);  // 倒数第二个字符（数字或字母）
-	const WCHAR englishSymbol = coral::tsf::separator_replacement(
-		m_configSnapshot->autoConvertDigitSymbol, m_configSnapshot->auto_convert_letter_symbol,
+	WCHAR secondLastChar = lastTwoChars.GetAt(0);  // 倒数第二个字符（数字）
+	const WCHAR englishSymbol = coral::tsf::digit_separator_replacement(
+		m_configSnapshot->autoConvertDigitSymbol,
 		secondLastChar, lastChar, digitChar);
 	if (!englishSymbol)
 		return false;

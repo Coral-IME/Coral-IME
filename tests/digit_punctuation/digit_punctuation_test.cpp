@@ -40,28 +40,43 @@ int main()
         }
         expect(DigitSeparatorReplacement(L'中', L'。') == L'\0');
         expect(DigitSeparatorReplacement(L'1', L'；') == L'\0');
+        // 回车提交 commit 后，逗号必须当次上屏，不能等下一个 t 才转换。
+        for (const auto punctuation : std::wstring(L"，：。")) {
+            const auto converted = following_punctuation(false, true, false, L't', punctuation);
+            const auto expected = punctuation == L'，' ? L',' : punctuation == L'：' ? L':' : L'.';
+            if (converted != expected)
+                throw std::runtime_error("committed commit: punctuation must convert before the next letter");
+        }
         // 为独立的字母选项手工挑选的已上屏文本用例。
         for (wchar_t letter : std::wstring(L"azAZａｚＡＺ")) {
-            expect(following_period(false, true, false, letter, L'。') == L'.');
-            expect(following_period(true, false, false, letter, L'。') == L'。');
-            expect(following_period(false, true, true, letter, L'。') == L'。');
-            expect(separator_replacement(false, true, letter, L'，', L'b') == L',');
-            expect(separator_replacement(false, true, letter, L'：', L'B') == L':');
-            expect(separator_replacement(false, true, letter, L'。', L'ｂ') == L'.');
-            expect(separator_replacement(true, false, letter, L'，', L'b') == L'\0');
-            expect(separator_replacement(true, true, letter, L'，', L'1') == L'\0');
-            expect(separator_replacement(false, true, letter, L'；', L'b') == L'\0');
+            for (const auto punctuation : std::wstring(L"，：。")) {
+                const auto expected = punctuation == L'，' ? L',' : punctuation == L'：' ? L':' : L'.';
+                expect(following_punctuation(false, true, false, letter, punctuation) == expected);
+                expect(following_punctuation(true, true, false, letter, punctuation) == expected);
+                expect(following_punctuation(true, false, false, letter, punctuation) == punctuation);
+                expect(following_punctuation(false, true, true, letter, punctuation) == punctuation);
+                expect(digit_separator_replacement(true, letter, punctuation, L'1') == L'\0');
+            }
+            expect(following_punctuation(false, true, false, letter, L'；') == L'；');
         }
-        expect(following_period(true, false, false, L'0', L'。') == L'.');
-        expect(following_period(false, true, false, L'0', L'。') == L'。');
-        expect(following_period(true, true, false, L'中', L'。') == L'。');
-        expect(following_period(true, true, false, L'a', L'》') == L'》');
-        expect(separator_replacement(true, false, L'１', L'，', L'2') == L',');
-        expect(separator_replacement(false, true, L'1', L'，', L'2') == L'\0');
-        expect(separator_replacement(true, true, L'1', L'，', L'b') == L'\0');
-        expect(separator_replacement(true, true, L'中', L'，', L'b') == L'\0');
-        expect(separator_replacement(false, false, L'a', L'。', L'b') == L'\0');
-        std::cout << "PASS: repeated zero/version/decimal sequences, option off, composition, Shift, separator fallback\n";
+        // 即使历史中残留中文逗号，所有字母也不能走退格注入路径。
+        for (const auto next : std::wstring(L"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZａｚＡＺ")) {
+            expect(digit_separator_replacement(true, L't', L'，', next) == L'\0');
+            expect(digit_separator_replacement(true, L'1', L'，', next) == L'\0');
+        }
+        // 数字行为保留：点立即转换，逗号和冒号只在两个数字之间替换。
+        expect(following_punctuation(true, false, false, L'0', L'。') == L'.');
+        expect(following_punctuation(true, true, false, L'1', L'，') == L'，');
+        expect(following_punctuation(true, true, false, L'1', L'：') == L'：');
+        expect(following_punctuation(false, true, false, L'0', L'。') == L'。');
+        expect(following_punctuation(true, true, false, L'中', L'。') == L'。');
+        expect(following_punctuation(true, true, false, L'a', L'》') == L'》');
+        expect(following_punctuation(true, true, false, L'\0', L'，') == L'，');
+        expect(digit_separator_replacement(true, L'１', L'，', L'2') == L',');
+        expect(digit_separator_replacement(true, L'1', L'：', L'２') == L':');
+        expect(digit_separator_replacement(false, L'1', L'，', L'2') == L'\0');
+        expect(digit_separator_replacement(true, L'中', L'，', L'2') == L'\0');
+        std::cout << "PASS: immediate committed-letter punctuation, no letter injection, digit fallback, option off, composition\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
