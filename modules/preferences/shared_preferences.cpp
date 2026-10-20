@@ -45,6 +45,8 @@ namespace {
 	constexpr const char* const CONFIG_SHM_NAME = "CORALPinyinConfigSharedMemoryV4";
 	constexpr const char* const CONFIG_MUTEX_NAME = "CORALPinyinConfigSharedMemoryMutexV4";
 	constexpr int MAX_SEQLOCK_RETRIES = 100;
+    // 配置可能在宿主输入线程初始化或写入，命名互斥体不得无限阻塞该线程。
+    constexpr int CONFIG_MUTEX_TIMEOUT_MS = 100;
 
 	struct HashPair {
 		uint64_t hash;
@@ -187,18 +189,8 @@ public:
 		try {
 			m_sharedMemoryName = coral::testing::objectName(CONFIG_SHM_NAME);
 			m_mutexName = coral::testing::objectName(CONFIG_MUTEX_NAME);
-#if defined(_WIN32) || defined(_MSC_VER)
-			if (hlp::shouldOnlyOpenSharedMemory()) {
-				m_hMutex = OpenMutexW(SYNCHRONIZE | MUTEX_MODIFY_STATE, FALSE, std::wstring(m_mutexName.begin(), m_mutexName.end()).c_str());
-			} else {
-				m_hMutex = CreateMutexW(hlp::NtLPC_GetDefaultSecurity(), FALSE, std::wstring(m_mutexName.begin(), m_mutexName.end()).c_str());
-			}
-			if (!m_hMutex) {
-				LOG_ERROR("Failed to create Windows or open mutex in UWP service mode: " + std::to_string(GetLastError()));
-				return false;
-			}
-#endif
-			ScopedLock createLock(m_hMutex);
+            if (!ensure_mutex_handle()) return false;
+			ScopedLock createLock(m_hMutex, CONFIG_MUTEX_TIMEOUT_MS);
 			if (!createLock.isAcquired()) return false;
 
 			if (connectToSharedMemory()) {
@@ -228,18 +220,7 @@ public:
 	bool tryReconnect() {
 		m_initialized = false;
 		m_configData = nullptr;
-#if defined(_WIN32) || defined(_MSC_VER)
-		if (hlp::shouldOnlyOpenSharedMemory()) {
-			if (m_hMutex) {
-				CloseHandle(m_hMutex);
-				m_hMutex = nullptr;
-			}
-			m_hMutex = OpenMutexW(SYNCHRONIZE | MUTEX_MODIFY_STATE, FALSE, std::wstring(m_mutexName.begin(), m_mutexName.end()).c_str());
-			if (!m_hMutex) {
-				return false;
-			}
-		}
-#endif
+        if (!ensure_mutex_handle()) return false;
 		if (connectToSharedMemory()) {
 			m_initialized = true;
 			LOG_TRACE("Reconnected to config shared memory");
@@ -264,7 +245,7 @@ public:
 		}
 		
 		try {
-			ScopedLock lock(m_hMutex);
+			ScopedLock lock(m_hMutex, CONFIG_MUTEX_TIMEOUT_MS);
 			if (!lock.isAcquired()) return false;
 			auto buffer = std::make_unique<ConfigBuffer>();
 			ShmFlagType currentIdx = 0;
@@ -373,7 +354,7 @@ std::string getConfig(const std::string& key) const {
 		}
 		
 		try {
-			ScopedLock lock(m_hMutex);
+			ScopedLock lock(m_hMutex, CONFIG_MUTEX_TIMEOUT_MS);
 			if (!lock.isAcquired()) return false;
 			return setConfigsInternal(configs);
 		}
@@ -437,18 +418,8 @@ std::string getConfig(const std::string& key) const {
 		try {
 			m_sharedMemoryName = coral::testing::objectName(CONFIG_SHM_NAME);
 			m_mutexName = coral::testing::objectName(CONFIG_MUTEX_NAME);
-#if defined(_WIN32) || defined(_MSC_VER)
-			if (hlp::shouldOnlyOpenSharedMemory()) {
-				m_hMutex = OpenMutexW(SYNCHRONIZE | MUTEX_MODIFY_STATE, FALSE, std::wstring(m_mutexName.begin(), m_mutexName.end()).c_str());
-			} else {
-				m_hMutex = CreateMutexW(hlp::NtLPC_GetDefaultSecurity(), FALSE, std::wstring(m_mutexName.begin(), m_mutexName.end()).c_str());
-			}
-			if (!m_hMutex) {
-				LOG_ERROR("Failed to create Windows or open mutex in UWP service mode: " + std::to_string(GetLastError()));
-				return false;
-			}
-#endif
-			ScopedLock createLock(m_hMutex);
+            if (!ensure_mutex_handle()) return false;
+			ScopedLock createLock(m_hMutex, CONFIG_MUTEX_TIMEOUT_MS);
 			if (!createLock.isAcquired()) return false;
 
 			bool initSuccess = false;
@@ -472,6 +443,25 @@ std::string getConfig(const std::string& key) const {
 	}
 
 private:
+    bool ensure_mutex_handle() {
+        if (m_mutexName.empty()) return false;
+#if defined(_WIN32) || defined(_MSC_VER)
+        // 超时后复用已打开的句柄，重复初始化不能覆盖并泄漏旧句柄。
+        if (m_hMutex) return true;
+        const std::wstring name(m_mutexName.begin(), m_mutexName.end());
+        if (hlp::shouldOnlyOpenSharedMemory()) {
+            m_hMutex = OpenMutexW(SYNCHRONIZE | MUTEX_MODIFY_STATE, FALSE, name.c_str());
+        } else {
+            m_hMutex = CreateMutexW(hlp::NtLPC_GetDefaultSecurity(), FALSE, name.c_str());
+        }
+        if (!m_hMutex) {
+            LOG_ERROR("SharedMemoryConfig open mutex failed: " + std::to_string(GetLastError()));
+            return false;
+        }
+#endif
+        return true;
+    }
+
     // 保持 V4 布局；每次使用都校验本地索引，不能只依赖连接时检查。
     bool copy_active_buffer(ConfigBuffer& buffer, ShmFlagType& active_index) const {
         if (!m_configData || m_configData->m_initialized.load(std::memory_order_acquire) != 1) return false;

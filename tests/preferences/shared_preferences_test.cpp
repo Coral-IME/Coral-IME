@@ -1,7 +1,10 @@
 #include "shared_preferences.h"
 #include "test_environment.h"
+#include "trace_log.h"
+#include "system_mutex_lease.hpp"
 #include <Windows.h>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
@@ -52,11 +55,103 @@ void rejected(SharedMemoryConfig& config) {
     SharedMemoryConfig batch_newcomer;
     check(!batch_newcomer.initializeAndSetConfigs({{"probe", "new"}}), "new batch connection rejects invalid data");
 }
+
+struct Handle {
+    HANDLE value = nullptr;
+    explicit Handle(HANDLE handle = nullptr) : value(handle) {}
+    ~Handle() { if (value && value != INVALID_HANDLE_VALUE) CloseHandle(value); }
+    Handle(const Handle&) = delete;
+    Handle& operator=(const Handle&) = delete;
+};
+
+std::wstring object_name(const char* base) {
+    const auto name = coral::testing::objectName(base);
+    return std::wstring(name.begin(), name.end());
 }
 
-int main() {
+int hold_config_mutex() {
+    Handle mutex(OpenMutexW(SYNCHRONIZE | MUTEX_MODIFY_STATE, FALSE,
+        object_name("CORALPinyinConfigSharedMemoryMutexV4").c_str()));
+    Handle ready(OpenEventW(EVENT_MODIFY_STATE, FALSE, object_name("CoralConfigLockReady").c_str()));
+    Handle release(OpenEventW(SYNCHRONIZE, FALSE, object_name("CoralConfigLockRelease").c_str()));
+    if (!mutex.value || !ready.value || !release.value || WaitForSingleObject(mutex.value, 1000) != WAIT_OBJECT_0) return 2;
+    SetEvent(ready.value);
+    // 旧版本无限等待时也能自行退出，避免失败夹具遗留持锁进程。
+    const auto result = WaitForSingleObject(release.value, 5000);
+    ReleaseMutex(mutex.value);
+    return result == WAIT_OBJECT_0 ? 0 : 3;
+}
+
+void check_lock_contention(SharedMemoryConfig& writer, SharedMemoryConfig& reader, char* root) {
+    Handle ready(CreateEventW(nullptr, TRUE, FALSE, object_name("CoralConfigLockReady").c_str()));
+    Handle release(CreateEventW(nullptr, TRUE, FALSE, object_name("CoralConfigLockRelease").c_str()));
+    wchar_t executable[32768]{};
+    const auto length = GetModuleFileNameW(nullptr, executable, 32768);
+    if (!ready.value || !release.value || length == 0 || length >= 32768) {
+        check(false, "contention fixture initialized");
+        return;
+    }
+    std::wstring command = L"\"" + std::wstring(executable) + L"\" --hold-config-mutex";
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    if (!CreateProcessW(executable, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process)) {
+        check(false, "mutex holder started");
+        return;
+    }
+    Handle child(process.hProcess), thread(process.hThread);
+    if (WaitForSingleObject(ready.value, 2000) != WAIT_OBJECT_0) {
+        check(false, "child acquired configuration mutex");
+        SetEvent(release.value);
+        WaitForSingleObject(child.value, 6000);
+        return;
+    }
+    const std::string before(root, kRootSize);
+    auto bounded_failure = [&](auto&& operation, const char* message) {
+        const auto start = std::chrono::steady_clock::now();
+        const bool result = operation();
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+        check(!result && elapsed < std::chrono::seconds(1), message);
+    };
+    SharedMemoryConfig newcomer, batch_newcomer;
+    bounded_failure([&] { return newcomer.initialize(); }, "initialization fails promptly under cross-process contention");
+    bounded_failure([&] { return batch_newcomer.initializeAndSetConfigs({{"probe", "blocked"}}); }, "initial batch fails promptly under contention");
+    bounded_failure([&] { return writer.setConfig("probe", "blocked"); }, "single write fails promptly under contention");
+    bounded_failure([&] { return writer.setConfigs({{"probe", "blocked"}}); }, "batch write fails promptly under contention");
+    bounded_failure([&] { return writer.initializeAndSetConfigs({{"probe", "blocked"}}); }, "initialized batch fails promptly under contention");
+    DWORD handles_before = 0, handles_after = 0;
+    check(GetProcessHandleCount(GetCurrentProcess(), &handles_before) != FALSE, "handle baseline available");
+    for (int i = 0; i < 4; ++i) bounded_failure([&] { return newcomer.initialize(); }, "repeated initialization remains bounded");
+    check(GetProcessHandleCount(GetCurrentProcess(), &handles_after) && handles_after == handles_before, "failed initialization retries do not leak mutex handles");
+    const auto start = std::chrono::steady_clock::now();
+    check(reader.getConfig("probe") == "batch" && !reader.getAllConfigMap().empty() &&
+        std::chrono::steady_clock::now() - start < std::chrono::seconds(1), "readers remain usable while configuration mutex is held");
+    check(std::memcmp(root, before.data(), kRootSize) == 0, "timeouts preserve sequence, index and both buffers");
+    check(WaitForSingleObject(child.value, 0) == WAIT_TIMEOUT, "holder still owns mutex until explicitly released");
+    SetEvent(release.value);
+    check(WaitForSingleObject(child.value, 6000) == WAIT_OBJECT_0, "holder exits after release");
+    DWORD exit_code = 1;
+    check(GetExitCodeProcess(child.value, &exit_code) && exit_code == 0, "mutex holder released normally");
+    check(newcomer.initialize() && batch_newcomer.initializeAndSetConfigs({{"probe", "retry"}}), "timed-out instances can initialize after release");
+    check(writer.setConfig("probe", "retry") && writer.setConfigs({{"probe", "batch"}}) &&
+        reader.getConfig("probe") == "batch", "writes recover after mutex release");
+    {
+        ScopedLock invalid(nullptr, 0);
+        check(!invalid.isAcquired(), "null mutex handle is rejected");
+        ScopedLock invalid_value(INVALID_HANDLE_VALUE, 0);
+        check(!invalid_value.isAcquired(), "invalid mutex handle is rejected");
+    }
+    Handle mutex(OpenMutexW(MUTEX_MODIFY_STATE, FALSE, object_name("CORALPinyinConfigSharedMemoryMutexV4").c_str()));
+    check(mutex.value != nullptr, "modify-only mutex handle opened");
+    ScopedLock failed_wait(mutex.value, 0);
+    check(!failed_wait.isAcquired(), "wait failure without synchronize access is rejected");
+}
+}
+
+int main(int argc, char** argv) {
     const char* scope = std::getenv("CORAL_TEST_NAMESPACE");
     if (!scope || !*scope) return 2;
+    if (argc == 2 && std::string(argv[1]) == "--hold-config-mutex") return hold_config_mutex();
     const auto name = coral::testing::objectName("CORALPinyinConfigSharedMemoryV4");
     {
         SharedMemoryConfig writer;
@@ -75,6 +170,7 @@ int main() {
         auto allocation = mapping.find<char>("ConfigDataRootCrossArchV4");
         if (!allocation.first || allocation.second != kRootSize) return 3;
         char* root = allocation.first;
+        check_lock_contention(writer, reader, root);
         const auto active = reinterpret_cast<std::atomic<std::uint32_t>*>(root + 4)->load();
         const auto sequence = reinterpret_cast<std::atomic<std::uint32_t>*>(root)->load();
         for (auto index : {2u, 5u, 6u, std::numeric_limits<std::uint32_t>::max()}) {
