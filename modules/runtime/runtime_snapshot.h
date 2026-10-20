@@ -27,8 +27,11 @@ class ConfigSnapshot
 public:
 	ConfigSnapshot();
 
-	// 宿主推送：原子替换整份快照（线程安全；读侧无锁）
+	// 宿主推送：原子替换持久快照；当前线程的请求覆盖继续有效，结束后读取最新持久值。
 	void update(std::shared_ptr<const EngineConfig> config);
+
+    // 返回调用线程当前的配置；请求覆盖不改写持久快照。
+    std::shared_ptr<const EngineConfig> current_config() const;
 
 	bool valid() const;
 
@@ -46,6 +49,20 @@ public:
 
 private:
 	std::shared_ptr<const EngineConfig> m_config;
+};
+
+// 仅用于同一线程中按嵌套顺序结束的同步请求，后台线程仍读取持久快照。
+class ScopedConfigOverride {
+public:
+    ScopedConfigOverride(const ConfigSnapshot& owner, std::shared_ptr<const EngineConfig> config);
+    ~ScopedConfigOverride();
+    ScopedConfigOverride(const ScopedConfigOverride&) = delete;
+    ScopedConfigOverride& operator=(const ScopedConfigOverride&) = delete;
+private:
+    const ConfigSnapshot* owner_;
+    std::shared_ptr<const EngineConfig> config_;
+    ScopedConfigOverride* previous_;
+    friend class ConfigSnapshot;
 };
 
 } // 命名空间 coral 结束

@@ -1,4 +1,4 @@
-// InputModeState：输入模式运行态（全半角 / 简繁体）的进程内唯一持有者。
+// InputModeState：全半角 / 简繁体的进程默认状态及线程内请求覆盖。
 //
 // 背景（设置项 Step 2 解耦，见 docs/工程结构现代化改造设计.md）：
 // 旧实现把"当前生效值"缓存在 SettingsConfig 的成员变量里（m_isFullWidth /
@@ -19,7 +19,8 @@
 // 只对 coraltsf 模块内可见，引擎（宿主进程）仍读自己那份——这与旧
 // SettingsConfig 成员缓存的行为完全一致（旧代码中 ForTsf 切换同样不跨模块）。
 // 跨模块统一依赖宿主推送机制（设置项 Step 3/4，见改造设计文档）。
-// 双轨期本类与 ConfigSnapshot 并列；Phase 4 Session 化后演进为 per-session 状态。
+// 本类与 ConfigSnapshot 并列；SessionPort 使用 ScopedInputMode 在同步请求内覆盖模式，
+// 退出作用域后恢复默认访问点，临时模式不影响其他线程或后续会话。
 #pragma once
 
 #include <atomic>
@@ -45,9 +46,22 @@ private:
 	std::atomic<bool> m_isTraditionalChinese{false};
 
 	friend InputModeState& inputModeState();
+    friend class ScopedInputMode;
 };
 
-// 进程内单例访问点（引擎与平台宿主共用）
+// 当前请求线程有模式覆盖时返回其局部状态，否则返回进程默认状态。
 InputModeState& inputModeState();
+
+// 与同步会话请求同寿命；同一线程按嵌套顺序销毁，不改变其他线程的模式。
+class ScopedInputMode {
+public:
+    ScopedInputMode(bool full_width, bool traditional);
+    ~ScopedInputMode();
+    ScopedInputMode(const ScopedInputMode&) = delete;
+    ScopedInputMode& operator=(const ScopedInputMode&) = delete;
+private:
+    InputModeState state_;
+    InputModeState* previous_;
+};
 
 } // 命名空间 coral 结束

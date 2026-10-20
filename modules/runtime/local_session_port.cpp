@@ -2,6 +2,8 @@
 #include "coral/composition/composition_session.h"
 #include "text_file_helpers.hpp"
 #include "core_operations.h"
+#include "runtime_context.h"
+#include "mode_selection.h"
 #include <limits>
 #include <mutex>
 #include <optional>
@@ -12,8 +14,8 @@ namespace coral::composition
 namespace
 {
 static_assert(FUZZY_CHOICES == kSessionFuzzyChoiceCount, "session fuzzy settings must match the legacy model");
-// 所有权迁移期间，解码器与设置仍是进程级全局。本二进制中的
-// 每个本地端口共享同一道门；各会话映射则不是。
+// 解码器、模型缓存和解析 arena 仍在本二进制内共享，所有本地端口统一串行访问。
+// 会话配置只覆盖当前请求线程；各端口的会话映射独立。
 std::mutex runtime_gate;
 SessionToken next_session_token = 1;
 
@@ -21,6 +23,27 @@ bool valid_text(const std::string& text)
 {
     return text.size() <= kMaxInputBytes && text.find('\0') == std::string::npos;
 }
+
+class SessionSettingsScope {
+public:
+    explicit SessionSettingsScope(const std::optional<SessionSettings>& settings) {
+        if (!settings) return;
+        auto config = std::make_shared<coral::EngineConfig>();
+        config->smart_prediction = settings->smart_prediction;
+        config->isUMode = settings->u_mode;
+        config->isVMode = settings->v_mode;
+        config->pinyin_correction = settings->pinyin_correction;
+        config->fuzzy_choices = settings->fuzzy_choices;
+        config->limit_count = settings->limit_count;
+        config->isShowInfos = settings->show_infos;
+        config->combined_lexicon_version = settings->combined_lexicon_version;
+        config_.emplace(coral::Engine::compatInstance().config(), std::move(config));
+        mode_.emplace(settings->full_width, settings->traditional_chinese);
+    }
+private:
+    std::optional<coral::ScopedConfigOverride> config_;
+    std::optional<coral::ScopedInputMode> mode_;
+};
 
 class LocalSessionPort final : public SessionPort
 {
@@ -125,7 +148,7 @@ public:
             }
             state.settings = settings;
             if (state.settings->fuzzy_choices.empty()) state.settings->fuzzy_choices.assign(FUZZY_CHOICES, 0);
-        });
+        }, false);
     }
 private:
     struct SessionState
@@ -140,15 +163,6 @@ private:
         result.session_generation = 1; result.status = status;
         result.result = status == SessionStatus::kOk;
         return result;
-    }
-    static void activate_settings(const SessionState& state)
-    {
-        coral::runtime::refresh_runtime_settings();
-        if (!state.settings) return;
-        const auto& settings = *state.settings;
-        coral::runtime::apply_runtime_settings(settings.u_mode, settings.v_mode, settings.pinyin_correction,
-            settings.full_width, settings.traditional_chinese, settings.show_infos, settings.limit_count,
-            settings.combined_lexicon_version, settings.fuzzy_choices.data(), static_cast<int>(settings.fuzzy_choices.size()), settings.smart_prediction);
     }
     static void identify_candidates(SessionResult& result)
     {
@@ -169,7 +183,7 @@ private:
         }
     }
     template<class Function>
-    SessionResult invoke(SessionToken token, std::uint64_t request_id, bool valid, Function function)
+    SessionResult invoke(SessionToken token, std::uint64_t request_id, bool valid, Function function, bool activate = true)
     {
         std::lock_guard<std::mutex> lock(runtime_gate);
         if (!current_runtime()) return reply(token, request_id, SessionStatus::kUnavailable);
@@ -179,7 +193,13 @@ private:
         auto result = reply(token, request_id);
         try
         {
-            activate_settings(found->second); function(found->second, result); identify_candidates(result);
+            std::optional<SessionSettingsScope> settings_scope;
+            if (activate) {
+                coral::runtime::refresh_runtime_settings();
+                settings_scope.emplace(found->second.settings);
+            }
+            function(found->second, result);
+            identify_candidates(result);
         }
         catch (...)
         {
