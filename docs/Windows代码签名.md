@@ -27,4 +27,4 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/windows/sign_w
 
 核对签名可使用 `Get-AuthenticodeSignature`，以实际 Status、SignerCertificate 和 TimeStamperCertificate 为准。当前整理只验证未签名安装包编译，没有执行签名、证书信任或安装；其他模式仍需在真实签名环境验证。
 
-技术参数见 [Microsoft SignTool](https://learn.microsoft.com/windows/win32/seccrypto/signtool)；NSIS 的卸载程序签名使用 3.08 或更新版本。发布者身份、证书服务选择及公开源码地址仍需在发行准备时确定，不沿用旧域名或未经确认的公司名称。
+技术参数见 [Microsoft SignTool](https://learn.microsoft.com/windows/win32/seccrypto/signtool)；NSIS 的卸载程序签名使用 3.08 或更新版本。公开发布者显示名统一为个人开发者 Coral-IME，源码入口及邮箱见 [发行信息](release-info.md)。显示名不保证满足证书或备案的实名要求；证书服务与信任链仍需独立确定，不将本轮文档/显示名修改称为已完成正式签名。

@@ -10,8 +10,8 @@ SetCompressor zlib
 
 ; HM NIS Edit Wizard helper defines
 !define PRODUCT_NAME "coralpinyin"
-!define PRODUCT_NAME_CN "CORAL输入法"
-!define PRODUCT_PUBLISHER "Coral Corp."
+!define PRODUCT_NAME_CN "珊瑚输入法"
+!define PRODUCT_PUBLISHER "Coral-IME"
 !define PRODUCT_WEB_SITE "https://coralime.cn"
 !define PRODUCT_DIR_REGKEY "Software\Microsoft\Windows\CurrentVersion\App Paths\${CORAL_ID_SETTINGS_EXE}"
 !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
@@ -61,15 +61,10 @@ SetCompressor zlib
 !define MUI_WELCOMEPAGE_TITLE "欢迎使用“$(^Name)”安装向导"
 !define MUI_WELCOMEPAGE_TEXT "这个向导将指引您完成“$(^Name)”的安装进程。 \r\n\r\n单击[下一步(N)]继续。"
 !insertmacro MUI_PAGE_WELCOME
-; License page
-;!insertmacro MUI_PAGE_LICENSE "license.rtf"
-; !define MUI_PAGE_HEADER_TEXT "许可协议与隐私政策"
-; !define MUI_LICENSEPAGE_TEXT_TOP ""
-; !define MUI_PAGE_HEADER_SUBTEXT "在安装“CORAL输入法”之前，请阅读许可协议与隐私政策。"
-; !define MUI_LICENSEPAGE_TEXT_BOTTOM "选择“我接受”代表您同意《CORAL输入法软件(个人版)最终用户许可协议》和《CORAL输入法隐私政策》。"
-; !define MUI_LICENSEPAGE_BUTTON "我接受(&I)"
-; !define MUI_PAGE_CUSTOMFUNCTION_SHOW SetFocusToButton
-; !insertmacro MUI_PAGE_LICENSE "${PACKAGE_DIR}\privacy.rtf"
+; 安装前提供可保存的同版本协议和政策，不将安装同意当作可选上传授权。
+!define MUI_LICENSEPAGE_TEXT_BOTTOM "选择“我接受”表示接受用户协议；隐私政策供阅读，不授权未来全部上传。"
+!define MUI_LICENSEPAGE_BUTTON "我接受"
+!insertmacro MUI_PAGE_LICENSE "${PACKAGE_DIR}\legal\安装前须知.txt"
 
 ; Directory page
 !define MUI_PAGE_HEADER_SUBTEXT "选择“$(^Name)”的安装文件夹。"
@@ -96,15 +91,15 @@ SetCompressor zlib
 ; ------ Exe 文件添加版本信息（这个放到 MUI_LANGUAGE后面，否则中文是乱码） ------
 VIProductVersion "${PRODUCT_VERSION}"
 ;产品名称
-VIAddVersionKey /LANG=${LANG_SimpChinese} "ProductName" "${PRODUCT_NAME}"
+VIAddVersionKey /LANG=${LANG_SimpChinese} "ProductName" "${PRODUCT_NAME_CN}"
 ;备注
 ;VIAddVersionKey /LANG=${LANG_SimpChinese} "Comments" "备注"
 ;公司
-VIAddVersionKey /LANG=${LANG_SimpChinese} "CompanyName" "Coral-IME"
+VIAddVersionKey /LANG=${LANG_SimpChinese} "CompanyName" "${PRODUCT_PUBLISHER}"
 ;合法商标
 ;VIAddVersionKey /LANG=${LANG_SimpChinese} "LegalTrademarks" ""
 ;版权
-VIAddVersionKey /LANG=${LANG_SimpChinese} "LegalCopyright" "Copyright (C) 2026 Coral-IME"
+VIAddVersionKey /LANG=${LANG_SimpChinese} "LegalCopyright" "Copyright (C) 2026 ${PRODUCT_PUBLISHER} and contributors"
 ;描述
 VIAddVersionKey /LANG=${LANG_SimpChinese} "FileDescription" "${PRODUCT_NAME} 安装程序"
 ;产品版本号
@@ -115,8 +110,8 @@ VIAddVersionKey /LANG=${LANG_SimpChinese} "FileVersion" "${PRODUCT_VERSION}"
 RequestExecutionLevel admin
 
 var BrandingMode
-Name "CORAL输入法"
-BrandingText "CORAL输入法$BrandingMode"
+Name "${PRODUCT_NAME_CN}"
+BrandingText "${PRODUCT_NAME_CN}$BrandingMode"
 !ifndef OUTPUT_FILE
   !error "Pass OUTPUT_FILE explicitly"
 !endif
@@ -238,7 +233,7 @@ Section "MainSection" SEC01
   SetOutPath "${NOW_INST_DIR}"
 
   CreateDirectory "$SMPROGRAMS\${PRODUCT_NAME_CN}"
-  CreateShortCut "$SMPROGRAMS\${PRODUCT_NAME_CN}\CORAL输入法.lnk" "${NOW_INST_DIR}\${CORAL_ID_SETTINGS_EXE}" "-showsetting"
+  CreateShortCut "$SMPROGRAMS\${PRODUCT_NAME_CN}\${PRODUCT_NAME_CN}.lnk" "${NOW_INST_DIR}\${CORAL_ID_SETTINGS_EXE}" "-showsetting"
   ; SSL/crypto/kdcsdk removed from build - skip
 
   ${if} ${RunningX64}
@@ -292,6 +287,8 @@ Section "MainSection" SEC01
   File "${PACKAGE_DIR}\LICENSING.md"
   File "${PACKAGE_DIR}\THIRD_PARTY_NOTICES.md"
   File "${PACKAGE_DIR}\THIRD_PARTY_MANIFEST.json"
+  SetOutPath "${NOW_INST_DIR}\legal"
+  File "${PACKAGE_DIR}\legal\*.*"
   SetOutPath "${NOW_INST_DIR}\licenses"
   File "${PACKAGE_DIR}\licenses\*.*"
   SetOutPath "${NOW_INST_DIR}"
@@ -575,12 +572,12 @@ Section -Post
   ${Else}
     ExecWait '${SYS_DIR_32_32}\regsvr32.exe /s "${SYS_DIR_32_32}\${CORAL_ID_TSF_X86_DLL}"'
   ${EndIf}
-  DetailPrint "正在注册 CORAL输入法服务..."
-  nsExec::ExecToLog 'sc create ${CORAL_ID_SERVICE_NAME} binPath= "${NOW_INST_DIR}\${CORAL_ID_SERVICE_EXE}" start= auto DisplayName= "CORAL输入法服务"'
+  DetailPrint "正在注册 ${PRODUCT_NAME_CN}服务..."
+  nsExec::ExecToLog 'sc create ${CORAL_ID_SERVICE_NAME} binPath= "${NOW_INST_DIR}\${CORAL_ID_SERVICE_EXE}" start= auto DisplayName= "${PRODUCT_NAME_CN}服务"'
   Pop $0
   ${If} $0 == 0
-    DetailPrint "CORAL输入法服务注册成功"
-    nsExec::ExecToLog 'sc description ${CORAL_ID_SERVICE_NAME} "CORAL输入法服务，停用可能会导致部分功能无法正常使用。"'
+    DetailPrint "${PRODUCT_NAME_CN}服务注册成功"
+    nsExec::ExecToLog 'sc description ${CORAL_ID_SERVICE_NAME} "${PRODUCT_NAME_CN}服务，停用可能会导致部分功能无法正常使用。"'
   DetailPrint "正在配置服务权限..."
   nsExec::ExecToLog 'sc sdset ${CORAL_ID_SERVICE_NAME} "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPLOCRRC;;;IU)(A;;CCLCSWRPWPLOCRRC;;;AC)S:(ML;;NW;;;LW)"'
   Pop $0
@@ -592,12 +589,12 @@ Section -Post
     nsExec::ExecToLog 'sc start ${CORAL_ID_SERVICE_NAME}'
     Pop $0
     ${If} $0 == 0
-      DetailPrint "CORAL输入法服务启动成功"
+      DetailPrint "${PRODUCT_NAME_CN}服务启动成功"
     ${Else}
-      DetailPrint "CORAL输入法服务启动失败，错误代码: $0"
+      DetailPrint "${PRODUCT_NAME_CN}服务启动失败，错误代码: $0"
     ${EndIf}
   ${Else}
-    DetailPrint "CORAL输入法服务注册失败，错误代码: $0"
+    DetailPrint "${PRODUCT_NAME_CN}服务注册失败，错误代码: $0"
   ${EndIf}
   ; 旧 TSF 可能在文件复制期间重启了旧渲染器。新安装路径写入后再清理一次。
   nsExec::ExecToLog 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\prepare_install.ps1" -PreviousInstallDir "$PreviousRuntimeDir" -PreviousProductRoot "$PreviousProductRoot" -TargetInstallDir "${NOW_INST_DIR}" -ProcessesOnly'
@@ -651,16 +648,16 @@ Section Uninstall
   StrCpy $LocalLowDir "$LOCALAPPDATA\..\LocalLow"
 
   Call un.KillRunningProc
-  ; 停止并删除 CORAL输入法服务
-  DetailPrint "正在停止 CORAL输入法服务..."
+  ; 停止并删除 ${PRODUCT_NAME_CN}服务
+  DetailPrint "正在停止 ${PRODUCT_NAME_CN}服务..."
   nsExec::ExecToLog 'sc stop ${CORAL_ID_SERVICE_NAME}'
-  DetailPrint "正在删除 CORAL输入法服务..."
+  DetailPrint "正在删除 ${PRODUCT_NAME_CN}服务..."
   nsExec::ExecToLog 'sc delete ${CORAL_ID_SERVICE_NAME}'
 
   Delete "$SMPROGRAMS\${PRODUCT_NAME_CN}\Uninstall.lnk"
   Delete "$SMPROGRAMS\${PRODUCT_NAME_CN}\Website.lnk"
 
-  Delete "$SMPROGRAMS\${PRODUCT_NAME_CN}\CORAL输入法.lnk"
+  Delete "$SMPROGRAMS\${PRODUCT_NAME_CN}\${PRODUCT_NAME_CN}.lnk"
 
   ; 这里在卸载程序时不再删除用户词典
   RMDir /REBOOTOK /r "$LocalLowDir\coralpinyin\config"

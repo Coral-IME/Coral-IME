@@ -20,7 +20,7 @@ python tools/checks/run_all.py --build-dir build/win-x64-release --configuration
 
 第三方源码、许可和版本证据登记于 `third_party/manifest.json`。更新依赖时保留上游声明、补齐许可文件并重建清单；版本宏不足以证明原导入提交。项目自有许可范围见 `docs/source-license-map.json`，其中 PacketVideo 与其他外部文件不属于项目 MPL 代码。
 
-安装包收集会携带 MPL、第三方通知、完整许可文本及组件清单。公开发布前还需确定发布主体和源码地址，核对联网、日志、输入记录、崩溃上传等实际行为，见 [发布前核对](legal/发布前核对.md)。本地编译安装程序不等于执行安装或公开发行。
+安装包收集携带 MPL、第三方通知、完整许可/组件清单及同版本用户协议、隐私政策、许可说明。公开署名 Coral-IME、联系邮箱和源码入口已在 [发行信息](release-info.md)统一；更新/主动翻译、本地数据及反馈按 [隐私政策](legal/隐私政策.md)说明，不称全程序离线。实际源码可访问性、网页部署及生产日志/邮件清理等见 [发布前核对](legal/发布前核对.md)。本地编译不等于安装或公开发行。
 
 第六批 D 的 diagnostic_request、diagnostic_process 与 tsf_filter_ownership 验证严格请求、隔离人工故障转储/ZIP 和真实 DLL 加载卸载的进程过滤器所有权。测试输出在 build 树的 test-users/diagnostic-<配置>；不采集用户正在运行的程序或旧用户日志。契约、退出码及尚未实现的手动上传见 [本地诊断](local_diagnostics.md)。
 

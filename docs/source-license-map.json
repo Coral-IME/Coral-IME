@@ -3,6 +3,9 @@
   "project_license": "MPL-2.0",
   "license_documents": ["LICENSE", "LICENSING.md", "THIRD_PARTY_NOTICES.md"],
   "project_paths": [
+    "docs/release-info.md",
+    "docs/legal/许可说明.md",
+    "tools/release/export_legal_pages.py",
     "docs/build-baseline.md",
     "docs/source-license-review.md",
     "tests/network/CMakeLists.txt",

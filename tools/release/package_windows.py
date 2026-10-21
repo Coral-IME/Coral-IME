@@ -14,6 +14,22 @@ OWNED=tuple(IDENTITY[key] for key in ('settings_exe','update_exe','diagnostic_ex
 GENERATORS=('coral_lexicon_builder.exe','coral_bundle_decoder.exe')
 BUILD_TOOLS=('coral_resource_compiler.exe',)
 
+LEGAL_DOCUMENTS=('用户协议.md','隐私政策.md','许可说明.md')
+
+def stage_legal_documents(package):
+    # 与官网使用同一份正文，安装前可读，安装后保留离线副本。
+    legal_dir=Path(package)/'legal';legal_dir.mkdir()
+    for name in LEGAL_DOCUMENTS:
+        shutil.copyfile(CODE_ROOT/'docs/legal'/name,legal_dir/name)
+    notice=("珊瑚输入法 · 安装前须知\n"
+            "提供者：个人开发者（公开署名：Coral-IME）\n"
+            "联系邮箱：coralime@126.com\n\n"
+            "继续安装表示接受以下用户协议；隐私政策供阅读。\n"
+            "这不概括授权上传，不代替可选云翻译或反馈附件的主动选择。\n\n")
+    for name in ('用户协议.md','隐私政策.md'):
+        notice+=(CODE_ROOT/'docs/legal'/name).read_text(encoding='utf-8-sig')+'\n\n'
+    (legal_dir/'安装前须知.txt').write_bytes(notice.replace('\r\n','\n').replace('\n','\r\n').encode('utf-16'))
+
 def machine(path):
     with Path(path).open('rb') as stream:
         if stream.read(2)!=b'MZ':raise ValueError('Not a PE binary: '+str(path))
@@ -72,6 +88,7 @@ def main():
         for name in ('LICENSE','LICENSING.md','THIRD_PARTY_NOTICES.md'):
             shutil.copyfile(CODE_ROOT/name,package/name)
         shutil.copyfile(CODE_ROOT/'third_party/manifest.json',package/'THIRD_PARTY_MANIFEST.json')
+        stage_legal_documents(package)
         license_dir=package/'licenses';license_dir.mkdir()
         copied_licenses=[]
         for component in notice_inventory['components']:
