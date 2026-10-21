@@ -48,7 +48,7 @@ bool start_runtime_impl(const char* coralDir, bool bSync)
 	hlp::initCoralPinyinLog(hlp::LogPathType::AppType);
 
 	// 必须先于任何 getSettingStore()/getCloudLexiconPath() 调用初始化 SettingsConfig，
-	// 否则 m_configStore 会以空 m_iniFilePath 提前创建（对照 wpstsf 版 start_runtime 的顺序）。
+	// 否则配置存储会在路径尚未绑定时提前创建，后续读取将使用错误的配置位置。
 	sConfig->prepare_runtime_settings(configiniPath.string());
 
 	// 用户词典路径：

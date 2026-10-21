@@ -1,33 +1,34 @@
 # 维护与验证
 
-2026-10-21 的 [干净构建基线](build-baseline.md) 已通过 x64 Debug/Release 各 69/69；可选服务端单独 30/30。以下历史迁移批次保留其当时的数量和边界，不能替代当前基线。
+当前说明更新于 2026-10-21。开发遵循 [开发准则](../DEVELOPMENT.md)，实现与验证记录见 [维护计划](code-separation.md)。UI 保留、TSF 仅必要整理，范围见 [维护边界](code_separation_scope.md)。
 
-从根目录 README 的 CMake 预设构建，产物写入 `build/<预设>/`。当前默认 x64 Debug、Release 各注册 69 项客户端测试（接入独立服务端时另增一个 CTest 项），包含协议、TSF 状态、用户历史格式、配置/UI、特殊模式、混输，以及 ZIP、命名空间、自制演示引擎和基础契约检查。开发遵循 [开发准则](../DEVELOPMENT.md)，当前去重迁移见 [批次计划](code-separation.md)。
+## 构建和测试
+
+使用根 README 的 CMake 预设，产物在 `build/<预设>/`。默认官网更新开启时，客户端注册 **69 项测试**；找到同级独立服务端仓库时，再注册 `update_notice_server`，合计 **70 项**。正式数据等额外选项会改变数量，以该构建树的测试清单为准。
 
 ```powershell
+ctest --test-dir build/win-x64-release -C Release -N
 python tools/checks/run_all.py --build-dir build/win-x64-release --configuration Release --no-build
 ```
 
-当前去重范围按 [维护者调整](code_separation_scope.md) 执行：UI 保留、TSF 仅简单整理，既有默认测试继续保留。范围缩小不等于完成未执行的发行/UI 验收。
+覆盖引擎、会话和协议、共享配置、TSF/UI、语音/翻译、更新、ZIP 及自制演示。服务端 CTest 项内部运行独立仓库单元测试，不能把内部测试数与客户端项数相加。提交 `d240364` 的独立 x64 Debug/Release 基线各 69/69、服务端另验 30/30，见 [基线报告](build-baseline.md)；这不是后续工作树的全量回归结果。
 
-该入口先检查确有测试注册，正式数据清单和旧导出基线不会自动成为必跑项。完整参数见 [数据工具](data-tools.md)。
+正式数据回归需显式设置 `CORAL_ENABLE_OFFICIAL_DATA_TESTS` 与 `CORAL_TEST_DATA_DIR`，使用隔离用户目录与共享对象命名空间。默认测试通过不代表正式输入质量、安装兼容性或实际宿主行为全部通过。已有正式配置门闸失败与主索引差异尚未完成当前版本复验，不删除断言来掩盖问题。
 
-正式数据额外回归需显式设置 CORAL_ENABLE_OFFICIAL_DATA_TESTS 与 CORAL_TEST_DATA_DIR；测试由独立用户目录和共享对象命名空间启动。当前已知 config_gate 失败仍保留，不应修改断言来掩盖产品行为。默认测试通过不表示正式输入质量或安装兼容性全部通过。
+## 配置和验证边界
 
-公开候选没有旧 golden 集和正式评测语料，不能声称旧 golden 门禁已经执行。新的用例只能使用人工夹具或来源、许可已确认的输入，不将真实用户日志或输入记录当作夹具。
+- 源码默认程序版本为 **1.0.0.3**；显式 `CORAL_APP_VERSION` 可以覆盖，已有构建缓存不会随文档变化。打包版本、运行配置和版本资源应使用同一发行版本，见 [构建说明](build.md)。
+- 更新默认访问 `https://coralime.cn`；关闭构建中的更新使用 `CORAL_ENABLE_UPDATES=OFF`。协议、下载接受及取消分别见 [更新流程](update_detection.md)、[安装包接受](update_package_acceptance.md)、[私有更新通信](update_private_channel.md)。
+- 更新测试使用人工元数据、人工文件、隔离子进程及本机服务，不执行安装包。真实 HTTPS 联调需显式运行工具，结果按具体版本登记。
+- 在线词库独立配置默认空，未配置时不创建请求。见 [在线词库边界](online_lexicon_catalog.md)。翻译默认关闭；语音实现和测试保留，但产品入口屏蔽。
+- 诊断测试仅采集隔离的人工故障进程，产物位于构建树的测试目录，不采集用户正在运行的程序或旧用户日志。见 [本地诊断](local_diagnostics.md)。
 
-修改数据入口时先运行公开小样本，再检查 core 索引与安装端解包重建逐字节一致。正式源和模型分别登记；明确复用模型不能写成全量重训。输出选择新的目录，保留失败日志，禁止覆盖源输入。
+公开夹具只使用人工或来源、许可已确认的输入。公开候选不包含旧 golden 集、正式语料或真实用户输入记录，不能宣称已执行这些门禁。
 
-第三方源码、许可和版本证据登记于 `third_party/manifest.json`。更新依赖时保留上游声明、补齐许可文件并重建清单；版本宏不足以证明原导入提交。项目自有许可范围见 `docs/source-license-map.json`，其中 PacketVideo 与其他外部文件不属于项目 MPL 代码。
+## 数据、许可和发行
 
-安装包收集携带 MPL、第三方通知、完整许可/组件清单及同版本用户协议、隐私政策、许可说明。公开署名 Coral-IME、联系邮箱和源码入口已在 [发行信息](release-info.md)统一；更新/主动翻译、本地数据及反馈按 [隐私政策](legal/隐私政策.md)说明，不称全程序离线。实际源码可访问性、网页部署及生产日志/邮件清理等见 [发布前核对](legal/发布前核对.md)。本地编译不等于安装或公开发行。
+修改数据入口时先运行公开小样本，再核对核心索引和安装端解包重建是否逐字节一致；正式源和模型分别登记，复用模型不写成全量重训。使用新的输出目录，保留失败日志，不覆盖源输入。操作入口见 [数据工具](data-tools.md)。
 
-第六批 D 的 diagnostic_request、diagnostic_process 与 tsf_filter_ownership 验证严格请求、隔离人工故障转储/ZIP 和真实 DLL 加载卸载的进程过滤器所有权。测试输出在 build 树的 test-users/diagnostic-<配置>；不采集用户正在运行的程序或旧用户日志。契约、退出码及尚未实现的手动上传见 [本地诊断](local_diagnostics.md)。
+第三方身份、许可和文件哈希见 `third_party/manifest.json`；项目文件分类见 `docs/source-license-map.json`。保留上游及既有作者声明，不能仅凭版本宏或改名证明来源与独立实现。
 
-第六批 E1 新增 release_metadata、package_acceptance 和 update_agent_disabled：只使用人工 JSON/文件，不联系旧更新服务或执行安装程序。默认 CORAL_UPDATE_SERVICE_BASE_URL 为空；真实服务和旧更新 IPC 的关联/授权与取消仍待 E2。见 [更新接受契约](update_package_acceptance.md)。
-
-第六批 E2 新增 download_wire、download_job、update_private_process、update_http_limits。真实子进程仅执行人工动作/文件，HTTP 仅隔离 loopback 服务，覆盖关联、继承、取消/父退出/拥有 job 与接收限额；不触碰已安装产品的旧全局对象。默认51项，配置更新服务为50项。见 [私有更新请求](update_private_channel.md)。
-
-第六批 E3a 复用 lexicon_import_dialog_smoke 验证迁移后的同一文本解析库，人工文件/引擎替身/原断言保留，测试数量不变。词典算法和旧失败语义保留，不能作为新算法证据；见 [文本导入](lexicon_text_import.md)。
-
-第六批 E3b 新增 lexicon_service、online_lexicon_lifecycle、lexicon_service_configuration；人工服务 URL/实际CMake配置脚本、同一管理源码配假网络/队列及隔离目录，不访问公网或现有用户词库。54为当前默认数量；配置更新服务为53，词库服务配置不改变注册数。见 [在线词库门控与回收](online_lexicon_catalog.md)。
+安装包随附 MPL、第三方通知、完整许可及同版本用户协议、隐私政策、许可说明。发行主体、源码入口和运营事项见 [发行信息](release-info.md)与 [发布前核对](legal/发布前核对.md)。本地编译不等于安装、签名或公开发行。
