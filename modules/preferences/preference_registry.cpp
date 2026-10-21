@@ -1043,19 +1043,6 @@ bool SettingsConfig::getIsWordToCharacterEnabled() const
 	return (keyType != WordToCharacterKeyType::NONE);
 }
 
-void SettingsConfig::setPlaceHolderValue(const std::unordered_map<std::string, std::string>& placeHolderValue)
-{
-	// 空防护：与 getIsDefaultEnglishMode 一致，引擎初始化前 m_configStore 可能为 nullptr，
-	// 此时直接跳过写入（占位符配置由主进程设置菜单在引擎初始化后写入）。
-	if (!m_configStore)
-		return;
-	m_configStore->updateAtomically([&](IniFileManager& ini) {
-		for (const auto& pair : placeHolderValue) {
-			ini.setIniValue("placeholder", pair.first, pair.second);
-		}
-		}); 
-}
-
 int SettingsConfig::getPlaceHolderValue(const std::string& key) const
 {
 	// 空防护：引擎初始化失败/未完成时（如 TSF 宿主 ActivateEx 在 start() 失败后仍执行

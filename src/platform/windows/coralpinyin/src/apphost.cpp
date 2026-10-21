@@ -2,7 +2,6 @@
 #include "apphost.h"
 #include "pinyin.h"
 #include "clipboardhistory.h"
-#include "ui/settingmenu.h"
 #include "update_coordinator.h"
 #include "speech_runtime.h"
 
@@ -10,17 +9,14 @@ namespace
 {
 	constexpr UINT WM_APP_RUNTASK = WM_APP + 1;
 
-	// 定时器 ID 与周期（保持原 QTimer 间隔）
+	// 保留现有定时器编号，更新调度与本地词库维护各自管理。
 	enum TimerId
 	{
 		TID_MAINTAIN_LEXICON = 1,   // 60s   维护用户词库
 		TID_STORE_LEXICON = 2,      // 600s  落盘用户词库
-		TID_PLACEHOLDER = 3,        // 3600s 拉取 placeholder 配置
-		TID_TODAY_WORD = 4,         // 3600s 上报今日输入字数
 		TID_UPDATE_AUTO = 5,        // 每 60s 调度，协调器按持久时间限制为 24h 一次
 	};
 
-	constexpr UINT INTERVAL_HOURLY = 3600 * 1000;
 	constexpr UINT INTERVAL_UPDATE_FIRST = 60 * 1000;
 
 	HWND g_hAppWnd = nullptr;
@@ -61,11 +57,6 @@ namespace
 			case TID_STORE_LEXICON:
 				CPinyinModule::Instance().flush_user_lexicon();
 				return 0;
-			case TID_PLACEHOLDER:
-				SettingMenu::getMenu()->fetchPlaceholderData();
-				return 0;
-			case TID_TODAY_WORD:
-				return 0;
 			case TID_UPDATE_AUTO:
 				coral::updates::UpdateCoordinator::instance().on_auto_check_timer();
 				return 0;
@@ -73,7 +64,7 @@ namespace
 			break;
 		case WM_DESTROY:
 			ClipboardHistory::instance().detach();
-			for (UINT id = TID_MAINTAIN_LEXICON; id <= TID_UPDATE_AUTO; ++id)
+			for (const UINT id : {TID_MAINTAIN_LEXICON, TID_STORE_LEXICON, TID_UPDATE_AUTO})
 				::KillTimer(hWnd, id);
 			g_hAppWnd = nullptr;
 			return 0;
@@ -100,8 +91,6 @@ bool appInit()
 	// 旧的 60s/600s 宿主定时器，否则两个独立调度器会
 	// 竞争刷新同一个变更队列。在 ABI/UI 过渡期，消息分支
 	// 仍保留给显式调用者使用。
-	::SetTimer(g_hAppWnd, TID_PLACEHOLDER, INTERVAL_HOURLY, nullptr);
-	::SetTimer(g_hAppWnd, TID_TODAY_WORD, INTERVAL_HOURLY, nullptr);
 	::SetTimer(g_hAppWnd, TID_UPDATE_AUTO, INTERVAL_UPDATE_FIRST, nullptr);
 	ClipboardHistory::instance().attach(g_hAppWnd);
 	return true;

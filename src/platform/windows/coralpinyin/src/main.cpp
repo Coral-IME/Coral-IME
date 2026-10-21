@@ -4,7 +4,6 @@
 #include "settingmenu.h"
 #include "crash_reporter.h"
 #include "helper.h"
-#include "hardware_identity.hpp"
 #include "apphost.h"
 #include "online_lexicon_coordinator.h"
 #include "update_coordinator.h"

@@ -82,7 +82,7 @@ target_link_libraries(coralpinyin PRIVATE
     coral::windows_speech
     coral_engine_core
     opencc marisa-trie
-    wbemuuid NetApi32 version
+    NetApi32 version
 )
 
 target_link_libraries(coralpinyin PRIVATE coralipc coral_trace coral_preferences)

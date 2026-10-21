@@ -221,7 +221,6 @@ public:
 	void setLexiconLastMaintenanceTime(const std::string& time);
 	SettingsIniManager* getSettingStore();
 
-	void setPlaceHolderValue(const std::unordered_map<std::string, std::string>& placeHolderValue);
 	int getPlaceHolderValue(const std::string& key) const;
 
 	void setBatchConfigs(const std::vector<std::pair<std::string, std::string>>& configs);

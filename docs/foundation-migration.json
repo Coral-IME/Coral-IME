@@ -1,5 +1,12 @@
 {
   "batch": 1,
+  "subsequent_removals": [
+    {
+      "path": "modules/foundation/hardware_identity.hpp",
+      "date": "2026-10-21",
+      "reason": "删除旧后台设备标识生成及发送链；原路径映射仅记录历史迁移"
+    }
+  ],
   "algorithm_policy": "dictionary/model algorithms and formats retained by maintainer request",
   "paths": {
     "src/engine/src/utils/span.hpp": "modules/foundation/slice_view.h",
