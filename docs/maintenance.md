@@ -1,6 +1,8 @@
 # 维护与验证
 
-从根目录 README 的 CMake 预设构建，产物写入 `build/<预设>/`。当前默认 x64 Debug、Release 各注册 54 项测试（配置更新服务后不注册默认禁用入口用例），包含协议、TSF 状态、用户历史格式、配置/UI、特殊模式、混输，以及 ZIP、命名空间、自制演示引擎和基础契约检查。开发遵循 [开发准则](../DEVELOPMENT.md)，当前去重迁移见 [批次计划](code-separation.md)。
+2026-10-21 的 [干净构建基线](build-baseline.md) 已通过 x64 Debug/Release 各 69/69；可选服务端单独 30/30。以下历史迁移批次保留其当时的数量和边界，不能替代当前基线。
+
+从根目录 README 的 CMake 预设构建，产物写入 `build/<预设>/`。当前默认 x64 Debug、Release 各注册 69 项客户端测试（接入独立服务端时另增一个 CTest 项），包含协议、TSF 状态、用户历史格式、配置/UI、特殊模式、混输，以及 ZIP、命名空间、自制演示引擎和基础契约检查。开发遵循 [开发准则](../DEVELOPMENT.md)，当前去重迁移见 [批次计划](code-separation.md)。
 
 ```powershell
 python tools/checks/run_all.py --build-dir build/win-x64-release --configuration Release --no-build

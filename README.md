@@ -22,7 +22,7 @@ cmake --build --preset win-x64-release
 ctest --preset win-x64-release
 ```
 
-独立副本和干净 Git 检出验证 Windows x64 Debug/Release 构建及每种配置的 24 项测试。x86 仅验证 TSF 目标，完整 x86 产品和实际安装未验证。
+2026-10-21 从提交 `d240364` 独立检出、使用空构建目录，Windows x64 Debug/Release 完整构建通过，客户端默认测试各 **69/69** 通过；可选服务端另验 30/30。环境、复跑方式及源码快照见 [当前构建基线](docs/build-baseline.md)。本轮未重跑 x86，完整 x86 产品和实际安装仍未验证。
 
 默认生成 `build/<预设名>/demo-runtime/`，含 `data/`、`config/` 和 SHA-256 清单。产品输出位于同一构建树的 `coralpinyin/<配置>/`。演示测试显式选择资源路径、独立用户目录及共享内存命名空间，默认不安装输入法。
 
