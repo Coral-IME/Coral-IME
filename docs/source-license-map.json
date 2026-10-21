@@ -1,7 +1,9 @@
 {
   "format_version": 1,
   "project_license": "MPL-2.0",
+  "license_documents": ["LICENSE", "LICENSING.md", "THIRD_PARTY_NOTICES.md"],
   "project_paths": [
+    "docs/source-license-review.md",
     "tests/network/CMakeLists.txt",
     "tests/network/curl_lifecycle_test.cpp",
     "modules/updates/configure_update_service.cmake",

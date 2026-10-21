@@ -2,6 +2,10 @@
 
 项目有权授予许可的原创源码、构建和数据工具、测试、维护文档及配套原创资源采用 MPL-2.0。完整条款见 [LICENSE](LICENSE)，逐路径范围见 [source-license-map.json](docs/source-license-map.json)。既有作者署名保留，不将所有贡献归为单一新作者。
 
+项目许可标识为 `SPDX-License-Identifier: MPL-2.0`，适用文件见路径清单的 `project_paths`；`license_documents` 单列许可及通知材料，不改变标准许可文本或第三方声明的原有性质。
+
+2026-10-21 已完成维护者要求的 [来源与许可基础复核](docs/source-license-review.md)：第三方文件/许可校验及候选文件归类通过；保留实现、历史版本未知与外部参考的限制在报告中明确，不将既有 UI/资源授权扩大为全部历史代码的授权证明。
+
 第三方源码使用各自许可，不受本项目 MPL 声明替代；通知及完整文本见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 和 [组件清单](third_party/manifest.json)。尤其是 PacketVideo 派生的 `modules/foundation/utf8conv.h` 保持 Apache-2.0，不作为项目自有 MPL 文件。
 
 ## 自制演示与公共资源
