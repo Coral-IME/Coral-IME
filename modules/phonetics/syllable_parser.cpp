@@ -883,8 +883,17 @@ void coral::phonetics::SyllableParser::build_fuzzy_map()
 
 bool coral::phonetics::SyllableParser::load(const coral::phonetics::LexiconLocations& path, bool bSync, bool retryUntilSuccess)
 {
+    std::lock_guard<std::mutex> lock(load_mutex_);
+    return load_locked(path, bSync, retryUntilSuccess);
+}
+
+bool coral::phonetics::SyllableParser::load_locked(const coral::phonetics::LexiconLocations& path,
+    bool synchronous, bool retry_until_success)
+{
     // 必须等上一批结束后，才能替换其任务正在读取的路径。
-    loading_tasks_.finish();
+    finish_model_loading_locked();
+    has_loaded_ = false;
+    clear_pinyin_model_cache();
     if (all_lexicon_path_.versionId != path.versionId ||
         all_lexicon_path_.lexiconBaseDir != path.lexiconBaseDir ||
         all_lexicon_path_.strokeTrie.identifier != path.strokeTrie.identifier ||
@@ -894,39 +903,26 @@ bool coral::phonetics::SyllableParser::load(const coral::phonetics::LexiconLocat
         u_mode_.reset();
         uu_mode_.reset();
         uu_available_ = false;
-        clear_pinyin_model_cache();
     }
 	all_lexicon_path_ = path;
-	retry_load_until_success_ = retryUntilSuccess;
-	// 装载策略由边界注入（引擎核心不感知 UWP/平台运行模式）：
-	// retryUntilSuccess=true 时 m_hasLoaded 只在装载成功后置位，解析入口据此重试；
-	// 否则首次调用即置位，后续调用直接返回（沿用旧语义）。
-	if (!retry_load_until_success_) {
-		if (has_loaded_) {
-			return true;
-		}
-		has_loaded_ = true;
-	}
-	LOG_INFO(std::string("PinyinModel load policy: ") + (bSync ? "sync" : "async")
-		+ (retryUntilSuccess ? " with retry-until-success" : ""));
-	const bool shouldLoadAsync = !bSync;
+	retry_load_until_success_ = retry_until_success;
+	LOG_INFO(std::string("PinyinModel load policy: ") + (synchronous ? "sync" : "async")
+		+ (retry_until_success ? " with retry-until-success" : ""));
+	const bool shouldLoadAsync = !synchronous;
 	
 	if (!shouldLoadAsync) {
 		bool primarySuccess = load_primary_lexicon();
 		bool modelSuccess = load_pinyin_model();
-		bool success = primarySuccess && modelSuccess;
-		if (success) {
-			has_loaded_ = true;
-		}
-		return success;
+		has_loaded_ = primarySuccess && modelSuccess;
+		return has_loaded_;
 	}
 	else {
-		return loading_tasks_.start({
+		loading_pending_ = loading_tasks_.start({
             [this] { return load_primary_lexicon(); },
             [this] { return load_pinyin_model(); }
         });
+		return loading_pending_;
 	}
-	return true;
 }
 
 bool coral::phonetics::SyllableParser::load_primary_lexicon()
@@ -1008,18 +1004,15 @@ bool coral::phonetics::SyllableParser::parse_input(
 	int asciiMode,
 	uint32_t conditionId, const std::string& condition)
 {
-	// 词库未就绪时的重试（策略由边界注入）：典型场景为 UWP 服务模式，
-	// 宿主只开共享内存，服务就绪前词库装载失败，需在解析入口重试直至成功。
-	// UWP 回退模式在初始化时已创建自己的共享内存，不会进入该分支。
-	if (retry_load_until_success_) {
-		if (!ensure_model_loaded()) {
-			res.clear();
-			pyRes.clear();
-			isFixedRes.clear();
-			is_exist_next_page_ = false;
-			return false;
-		}
-	}
+    // 整次解析与加载/重试串行；排空异步任务建立所有模型写入到解析读取的同步关系。
+    std::unique_lock<std::mutex> load_lock(load_mutex_);
+    if (!ensure_model_loaded_locked()) {
+        res.clear();
+        pyRes.clear();
+        isFixedRes.clear();
+        is_exist_next_page_ = false;
+        return false;
+    }
 	//g_settingsConfig->setShowInfos(true); // 自动化测试时启用词典信息显示
 
 	// 本次解析用到的临时容器内存全部来自 arena，作用域结束时统一回收。
@@ -1643,7 +1636,7 @@ bool coral::phonetics::SyllableParser::revert_last_action_for_phrase(const std::
 void coral::phonetics::SyllableParser::stop_background_work()
 {
     std::lock_guard<std::mutex> lock(load_mutex_);
-    if (!loading_tasks_.finish())
+    if (loading_pending_ && !finish_model_loading_locked())
         LOG_ERROR("Engine: a background model load failed");
     lexicon_manager_.shutdown_user_history();
 }
@@ -1977,13 +1970,20 @@ std::vector<coral::phonetics::syntax::CorrectionResult> coral::phonetics::Syllab
 	return allResAndScore;
 }
 
-bool coral::phonetics::SyllableParser::ensure_model_loaded()
+bool coral::phonetics::SyllableParser::finish_model_loading_locked()
 {
-	std::unique_lock<std::mutex> lock(load_mutex_);
-	if (has_loaded_)
-		return true;
-	bool success = load(all_lexicon_path_, true, retry_load_until_success_);
-	return success;
+    if (loading_pending_) {
+        has_loaded_ = loading_tasks_.finish();
+        loading_pending_ = false;
+    }
+    return has_loaded_;
+}
+
+bool coral::phonetics::SyllableParser::ensure_model_loaded_locked()
+{
+    if (finish_model_loading_locked()) return true;
+    if (!retry_load_until_success_) return false;
+    return load_locked(all_lexicon_path_, true, true);
 }
 
 bool coral::phonetics::SyllableParser::export_pinyin_sequences_to_dot(

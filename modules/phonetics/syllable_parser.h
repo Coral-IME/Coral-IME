@@ -111,8 +111,8 @@ public:
     static void release_instance();
 	void is_exist_next_page(bool& existNextPage);
 	const string& candidate_display_text(int index) const;
-	// retryUntilSuccess：装载失败后在解析入口重试直至成功（策略由边界注入，
-	// 引擎核心不感知平台运行模式；典型场景为 UWP 服务模式）
+	// 异步返回仅表示任务已接收；首次解析等待整批完成，失败不发布就绪状态。
+	// retryUntilSuccess 允许解析入口在失败后同步重试；显式 load 可重新发起加载。
 	bool load(const coral::phonetics::LexiconLocations &path, bool bSync, bool retryUntilSuccess = false);
 
 	// 拼音解析流程拆分
@@ -219,8 +219,10 @@ private:
         coral::phonetics::ParseTextSet& outputSentences,
         bool needDeleteBadFirst
     );
-	// m_retryLoadUntilSuccess 置位且词库尚未装载成功时，在解析入口同步重试装载
-	bool ensure_model_loaded();
+    // 以下加载辅助函数均要求调用方持有 load_mutex_，加载任务不得回调该锁。
+    bool load_locked(const coral::phonetics::LexiconLocations& path, bool synchronous, bool retry_until_success);
+    bool finish_model_loading_locked();
+    bool ensure_model_loaded_locked();
 	ParseMode get_parse_mode(const string& pystring, const int bound) const;
 	void export_graph_dot_file(const PinyinParseContext& context) const;
 private:
@@ -243,6 +245,7 @@ private:
 	string pre_input_string_;
 	vector<shared_ptr<coral::phonetics::CandidateTransform>> middlewares_;
 	bool has_loaded_ = false;
+    bool loading_pending_ = false;
 	// 词库装载失败后是否在解析入口重试（由 load 的 retryUntilSuccess 注入）
 	bool retry_load_until_success_ = false;
 	bool is_exist_next_page_ = false;
