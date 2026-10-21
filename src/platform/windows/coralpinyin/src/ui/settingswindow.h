@@ -93,7 +93,7 @@ public:
 	static void closeInstance();
 	// 更换皮肤；窗口已打开时会按新皮肤重建页面。
 	static void setSkin(const SettingsSkin& skin);
-	static const SettingsSkin& skin() { return s_skin; }
+	static const SettingsSkin& skin();
 
 	static bool isInstanceAlive() { return s_hwnd != nullptr; }
 	// 常用语/剪贴板数据变化后刷新对应列表；窗口未打开时忽略。

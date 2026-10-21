@@ -339,6 +339,7 @@ void check_speech_settings(HWND window, const std::filesystem::path& output)
 
 void check_update_notice_window(const std::filesystem::path& output)
 {
+    DpiContext dpi_context(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     CoralUpdateWindow notice;
     UpdateInfoLite info;
     info.serverVersion = "1.0.0.4";
@@ -365,11 +366,38 @@ void check_update_notice_window(const std::filesystem::path& output)
     require(!notice.is_alive() && closed == 1, "Closing the notice did not release its window");
     CoralUpdateWindow package_notice;
     info.packageAvailable = true;
+    info.serverVersion = "1.0.0.3";
+    info.updateDesc = u8"修复了一些内存和锁的安全问题。\n\n优化配置同步与候选显示，让输入更稳定。\n改进客户端更新体验。";
     require(package_notice.create(info, UpgradeMode::Manual), "Cannot create package update window");
     window = package_notice.hwnd();
     button = GetDlgItem(window, 0x2200);
     GetWindowTextW(button, text, 128);
     require(std::wstring(text) == L"立即更新", "Package action is missing");
+    for (const UINT dpi : {96u, 120u, 144u, 192u}) {
+        DpiScale scale(dpi);
+        RECT frame{0, 0, scale.pixels(540), scale.pixels(470)};
+        AdjustWindowRectExForDpi(&frame, static_cast<DWORD>(GetWindowLongPtrW(window, GWL_STYLE)), FALSE,
+            static_cast<DWORD>(GetWindowLongPtrW(window, GWL_EXSTYLE)), dpi);
+        SendMessageW(window, WM_DPICHANGED, MAKEWPARAM(dpi, dpi), reinterpret_cast<LPARAM>(&frame));
+        HWND notes = GetDlgItem(window, 0x2203);
+        LOGFONTW font{};
+        GetObjectW(reinterpret_cast<HFONT>(SendMessageW(notes, WM_GETFONT, 0, 0)), sizeof(font), &font);
+        require(font.lfHeight == -scale.pixels(14), "Update text is not rendered at device DPI");
+        RECT client{};
+        GetClientRect(window, &client);
+        for (HWND child : {notes, button, GetDlgItem(window, 0x2202)}) {
+            RECT bounds{};
+            GetWindowRect(child, &bounds);
+            MapWindowPoints(nullptr, window, reinterpret_cast<POINT*>(&bounds), 2);
+            require(bounds.left >= 0 && bounds.top >= 0 && bounds.right <= client.right && bounds.bottom <= client.bottom,
+                "Update controls clipped at scaled DPI");
+        }
+        save_page(window, output / ("update-ready-" + std::to_string(dpi) + ".png"));
+    }
+    RECT frame{0, 0, 810, 705};
+    AdjustWindowRectExForDpi(&frame, static_cast<DWORD>(GetWindowLongPtrW(window, GWL_STYLE)), FALSE,
+        static_cast<DWORD>(GetWindowLongPtrW(window, GWL_EXSTYLE)), 144);
+    SendMessageW(window, WM_DPICHANGED, MAKEWPARAM(144, 144), reinterpret_cast<LPARAM>(&frame));
     opened = 0;
     int ticks = 0;
     package_notice.onUpdate = [&] { ++opened; };
@@ -380,13 +408,25 @@ void check_update_notice_window(const std::filesystem::path& output)
     SendMessageW(window, WM_TIMER, 1, 0);
     require(opened == 0 && ticks == 1, "Busy state did not guard updates or poll progress");
     package_notice.set_progress(42, L"正在下载安装包");
-    package_notice.showFailure(L"测试下载失败");
+    save_page(window, output / "update-progress-144.png");
+    package_notice.showFailure(L"下载暂时中断，请检查网络连接后重试。");
+    save_page(window, output / "update-failure-144.png");
     require(IsWindowEnabled(button), "Failed download cannot be retried");
     SendMessageW(window, WM_COMMAND, MAKEWPARAM(0x2200, BN_CLICKED), 0);
     require(opened == 1, "Retry action did not fire");
     package_notice.show_installer_started();
     require(!IsWindowEnabled(button), "Installer can be started twice");
+    SendMessageW(window, WM_COMMAND, MAKEWPARAM(0x2200, BN_CLICKED), 0);
+    require(opened == 1, "Disabled installer action can still be invoked");
+    save_page(window, output / "update-installed-144.png");
     SendMessageW(window, WM_CLOSE, 0, 0);
+    SettingsWindow::setSkin(SettingsSkin::dark());
+    CoralUpdateWindow dark_notice;
+    require(dark_notice.create(info, UpgradeMode::Manual), "Cannot create themed update window");
+    SendMessageW(dark_notice.hwnd(), WM_DPICHANGED, MAKEWPARAM(144, 144), reinterpret_cast<LPARAM>(&frame));
+    save_page(dark_notice.hwnd(), output / "update-dark-144.png");
+    SendMessageW(dark_notice.hwnd(), WM_CLOSE, 0, 0);
+    SettingsWindow::setSkin(SettingsSkin::light());
 }
 
 int main(int argc, char** argv)

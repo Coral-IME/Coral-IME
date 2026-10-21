@@ -2285,6 +2285,11 @@ void SettingsWindow::closeInstance()
 		PostMessageW(s_hwnd, WM_CLOSE, 0, 0);
 }
 
+const SettingsSkin& SettingsWindow::skin()
+{
+    return s_skin;
+}
+
 void SettingsWindow::setSkin(const SettingsSkin& skin)
 {
 	DpiContext context(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
