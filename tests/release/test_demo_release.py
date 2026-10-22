@@ -27,7 +27,7 @@ class DemoReleaseTest(unittest.TestCase):
         self.installer.write_bytes(b'installer fixture')
         self.manifest = {
             'complete': True, 'installer_compiled': True, 'version': '0.0.0.0',
-            'sign_mode': 'None', 'installer_sha256': RELEASE.digest(self.installer),
+            'sign_mode': 'None', 'edition': 'demo', 'installer_sha256': RELEASE.digest(self.installer),
         }
         self.write_manifest()
 
@@ -68,7 +68,8 @@ class DemoReleaseTest(unittest.TestCase):
 
     def test_wrong_version_or_incomplete_package_is_rejected(self):
         for field, value in (('version', '1.0.0.3'), ('complete', False),
-                             ('installer_compiled', False), ('sign_mode', 'LocalTest')):
+                             ('installer_compiled', False), ('sign_mode', 'LocalTest'),
+                             ('edition', 'standard')):
             original = self.manifest[field]
             self.manifest[field] = value
             self.write_manifest()

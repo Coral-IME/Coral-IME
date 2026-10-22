@@ -35,7 +35,8 @@ def bundle(package_dir, output_dir, version, source_sha, repository, run_url):
     manifest_path = package_dir / 'package-manifest.json'
     manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
     if (manifest.get('complete') is not True or manifest.get('installer_compiled') is not True
-            or manifest.get('version') != version or manifest.get('sign_mode') != 'None'):
+            or manifest.get('version') != version or manifest.get('sign_mode') != 'None'
+            or manifest.get('edition') != 'demo'):
         raise ValueError('Expected a complete, unsigned package with the requested version')
     installer = package_dir / ('coralpinyin-window-x64-' + version + '.exe')
     installer_hash = digest(installer)
@@ -66,6 +67,7 @@ def bundle(package_dir, output_dir, version, source_sha, repository, run_url):
 
 - 使用仓库自制的小型演示词库及模型，未包含正式数据。
 - 包内包含 x64 程序及 x86 文本服务组件，自动更新在编译时关闭。
+- 安装完成后，请从开始菜单打开输入法；安装器明确标为演示版。
 - 安装包未签名；Windows 可能显示未知发布者提示。
 - 自动编译与测试通过不代表已完成实际安装、升级、卸载或真实应用输入验收。
 - 演示包沿用产品安装位置和标识，请在独立虚拟机验收，避免覆盖日常使用版本。
