@@ -45,6 +45,7 @@ def main():
     parser.add_argument('--makensis',type=Path,help='Optional explicit compiler; omitted means staging only')
     parser.add_argument('--sign-mode',choices=['None','LocalTest','Store','Artifact'],default='None')
     parser.add_argument('--demo',action='store_true',help='Mark the demo installer; launch manually from the Start menu')
+    parser.add_argument('--manual-launch',action='store_true',help='Launch from the Start menu; use standard NSIS without ShellExecAsUser')
     args=parser.parse_args()
     try:
         if not re.fullmatch(r'\d+\.\d+\.\d+\.\d+',args.version) or any(int(x)>65535 for x in args.version.split('.')):raise ValueError('Version must have four components, each <= 65535')
@@ -109,12 +110,15 @@ def main():
             command=[str(args.makensis.resolve()),'/NOCD','/INPUTCHARSET','UTF8','-DARCH=x64','-DDBG=0','-DPRODUCT_VERSION='+args.version,
                 '-DPACKAGE_DIR='+str(package),'-DOUTPUT_FILE='+str(installer)]
             if args.demo:command+=['-DCORAL_DEMO_PACKAGE=1']
+            if args.demo or args.manual_launch:command+=['-DCORAL_MANUAL_LAUNCH=1']
             if args.sign_mode!='None':command+=['-DCORAL_SIGN_SCRIPT='+str(sign),'-DCORAL_SIGN_MODE='+args.sign_mode]
             command+=[str(CODE_ROOT/'packaging/windows/coralpinyin_lite.nsi')]
             with (root/'nsis.log').open('wb') as stream:subprocess.run(command,cwd=root,stdout=stream,stderr=subprocess.STDOUT,check=True)
             if args.sign_mode!='None':subprocess.run(['powershell.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',str(sign),'-Mode',args.sign_mode,'-FilePath',str(installer)],check=True)
         record={'format_version':1,'complete':True,'version':args.version,'sign_mode':args.sign_mode,'installer_compiled':bool(installer),
             'edition':'demo' if args.demo else 'standard',
+            'manual_launch':args.demo or args.manual_launch,
+            'runtime':{key:provenance.get(key) for key in ('data_version','engine_version','model_mode','installer_bins_match')},
             'runtime_manifest_sha256':digest(runtime/'runtime-manifest.json'),'x86_tsf_sha256':digest(args.x86_tsf),
             'files':inventory(package),'license_files':copied_licenses,
             'third_party_manifest_sha256':digest(CODE_ROOT/'third_party/manifest.json'),

@@ -11,6 +11,9 @@ SetCompressor zlib
 ; HM NIS Edit Wizard helper defines
 !define PRODUCT_NAME "coralpinyin"
 !ifdef CORAL_DEMO_PACKAGE
+!ifndef CORAL_MANUAL_LAUNCH
+!define CORAL_MANUAL_LAUNCH 1
+!endif
 !define PRODUCT_NAME_CN "珊瑚输入法（演示版）"
 !else
 !define PRODUCT_NAME_CN "珊瑚输入法"
@@ -84,7 +87,11 @@ SetCompressor zlib
 !ifdef CORAL_DEMO_PACKAGE
 !define MUI_FINISHPAGE_TEXT "“$(^Name) ${PRODUCT_VERSION}” 已经成功安装到本机。\r\n\r\n请从开始菜单打开珊瑚输入法。本演示版仅含小型测试词库，关闭自动更新。\r\n\r\n点击[完成(F)]关闭此安装程序。"
 !else
+!ifdef CORAL_MANUAL_LAUNCH
+!define MUI_FINISHPAGE_TEXT "“$(^Name) ${PRODUCT_VERSION}” 已经成功安装到本机。\r\n\r\n请从开始菜单打开珊瑚输入法。\r\n\r\n点击[完成(F)]关闭此安装程序。"
+!else
 !define MUI_FINISHPAGE_TEXT "“$(^Name) ${PRODUCT_VERSION}” 已经成功安装到本机。\r\n\r\n点击[完成(F)]关闭此安装程序。"
+!endif
 !endif
 !define MUI_FINISHPAGE_NOREBOOTSUPPORT
 !insertmacro MUI_PAGE_FINISH
@@ -611,7 +618,7 @@ Section -Post
     MessageBox MB_ICONEXCLAMATION "安装已完成，但旧版进程仍在运行。请注销或重启 Windows 后使用新版本。"
   ${EndIf}
   ; 演示包由用户从开始菜单启动，不嵌入本地额外安装的启动插件。
-!ifndef CORAL_DEMO_PACKAGE
+!ifndef CORAL_MANUAL_LAUNCH
   Call EndRun
 !endif
   ; 清理安装标记：HKLM+ HKCU
@@ -704,7 +711,7 @@ Function un.onUninstSuccess
   MessageBox MB_ICONINFORMATION|MB_OK "$(^Name) 现已从您的计算机移除"
 FunctionEnd
 
-!ifndef CORAL_DEMO_PACKAGE
+!ifndef CORAL_MANUAL_LAUNCH
 Function EndRun
   ShellExecAsUser::ShellExecAsUser "" "${NOW_INST_DIR}\${CORAL_ID_SETTINGS_EXE}" "--startup-type=3"
 FunctionEnd

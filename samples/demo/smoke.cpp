@@ -36,6 +36,17 @@ int main(int argc,char** argv) {
         coral::runtime::apply_runtime_settings(true,true,false,false,false,false,25,0,fuzzy,19);
         check(has("nihao",u8"你好"),"ordinary pinyin");
         check(has("zhongguo",u8"中国"),"multi-syllable dictionary");
+        {
+            const auto baseline = parse("zongguo");
+            fuzzy[0] = 1;
+            coral::runtime::apply_runtime_settings(true,true,false,false,false,false,25,0,fuzzy,19);
+            const auto enabled = parse("zongguo");
+            check(enabled != baseline && std::find(enabled.begin(), enabled.end(), u8"中国") != enabled.end(),
+                  "enabling fuzzy rules reparses the same input");
+            fuzzy[0] = 0;
+            coral::runtime::apply_runtime_settings(true,true,false,false,false,false,25,0,fuzzy,19);
+            check(parse("zongguo") == baseline, "disabling fuzzy rules restores same-input candidates");
+        }
         // 既有引擎把精确英文候选挡在 isShowInfos 之后。
         // 在此演练其支持的分支，而不改变候选排序行为。
         coral::runtime::apply_runtime_settings(true,true,false,false,false,true,25,0,fuzzy,19);
