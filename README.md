@@ -2,6 +2,8 @@
 
 珊瑚输入法是一款面向 Windows 的拼音输入法，由个人开发者 Coral-IME 维护。普通拼音输入、候选生成和用户学习在本机完成。
 
+我们力求用最低的磁盘内存占用实现最优的候选词推荐
+
 [官网](https://coralime.cn/) · [源码仓库](https://github.com/Coral-IME/Coral-IME) · 联系邮箱：coralime@126.com
 
 ## 程序功能
