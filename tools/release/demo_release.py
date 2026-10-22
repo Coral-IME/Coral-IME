@@ -121,6 +121,7 @@ def bundle(package_dir, output_dir, version, source_sha, repository, run_url,
     notes += f'''程序版本：{version}
 对应源码：https://github.com/{repository}/commit/{source_sha}
 构建与测试记录：{run_url}
+Code signing policy：https://github.com/{repository}/blob/{source_sha}/docs/code-signing-policy.md
 
 下载 `{installer_name}`；GitHub 自动附带的 Source code 文件是源码，不是安装包。
 校验值见 SHA256SUMS.txt，构建来源见 BUILD_INFO.json。

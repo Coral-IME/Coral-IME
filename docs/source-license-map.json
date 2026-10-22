@@ -3,6 +3,7 @@
   "project_license": "MPL-2.0",
   "license_documents": ["LICENSE", "LICENSING.md", "THIRD_PARTY_NOTICES.md"],
   "project_paths": [
+    "docs/code-signing-policy.md",
     ".github/workflows/windows-build.yml",
     ".github/workflows/official.yml",
     "resources/official-data.json",

@@ -30,6 +30,8 @@
 
 维护者可手动运行[正式词库测试包工作流](https://github.com/Coral-IME/Coral-IME/actions/workflows/official.yml)，从独立私有仓库读取固定版本数据，核验正式资源后生成测试安装包。数据边界、下载及验收见[正式词库打包说明](docs/official-data-release.md)。
 
+[Code signing policy](docs/code-signing-policy.md)：SignPath Foundation 申请阶段，尚未获批；当前安装包未签名，正式数据的开源与签名资格仍待确认。
+
 ## 工程与开发
 
 ### 目录说明
