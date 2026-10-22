@@ -21,6 +21,7 @@ int main(int argc,char** argv) {
     if(coral::archive::writeZip(dir/"escape.zip",{{"../escape",empty}},error))return 1;
     if(coral::archive::writeZip(dir/"duplicate.zip",{{"same",empty},{"same",empty}},error))return 1;
     for(const auto& entry:fs::directory_iterator(dir))
-        if(entry.path().filename().string().find(".partial.")!=std::string::npos)return 1;
+        // 使用明确的 UTF-8，避免英文 Windows 将中文文件名转换到本地代码页时抛异常。
+        if(entry.path().filename().u8string().find(".partial.")!=std::string::npos)return 1;
     return 0;
 }

@@ -72,7 +72,7 @@ jobs:
           CONFIGURATION: ${{ matrix.configuration }}
         run: >-
           ctest --test-dir build/ci-x64 -C "$env:CONFIGURATION"
-          --no-tests=error --output-on-failure --output-junit test-results.xml
+          --no-tests=error --timeout 120 --output-on-failure --output-junit test-results.xml
       - name: Save Release binaries
         if: matrix.configuration == 'Release'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -212,6 +212,6 @@ jobs:
           SOURCE_SHA: ${{ github.sha }}
           DEMO_TAG: v${{ inputs.version }}-demo.${{ github.run_id }}
         run: |
-          gh release create "$DEMO_TAG" dist/*.exe dist/SHA256SUMS.txt dist/BUILD_INFO.json dist/package-manifest.json \
+          gh release create "$DEMO_TAG" dist/*.exe dist/SHA256SUMS.txt dist/BUILD_INFO.json dist/package-manifest.json dist/RELEASE_NOTES.md \
             --target "$SOURCE_SHA" --title "珊瑚输入法 演示版 $CORAL_CI_VERSION" \
             --notes-file dist/RELEASE_NOTES.md --draft --prerelease --latest=false
