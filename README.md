@@ -28,6 +28,8 @@
 
 [Windows 自动构建](https://github.com/Coral-IME/Coral-IME/actions/workflows/windows.yml)检查 x64 Debug/Release、运行默认测试、编译 x86 文本服务组件，并生成未签名演示安装包。演示包仅含自制小词库，关闭自动更新，不代表正式输入质量。下载、Release 草稿和实际安装验收步骤见 [自动构建说明](docs/github-actions.md)。
 
+维护者可手动运行[正式词库测试包工作流](https://github.com/Coral-IME/Coral-IME/actions/workflows/official.yml)，从独立私有仓库读取固定版本数据，核验正式资源后生成测试安装包。数据边界、下载及验收见[正式词库打包说明](docs/official-data-release.md)。
+
 ## 工程与开发
 
 ### 目录说明

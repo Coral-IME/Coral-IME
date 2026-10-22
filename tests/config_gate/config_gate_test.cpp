@@ -107,6 +107,7 @@ int main(int argc, char** argv) {
         writer.setConfig("smartPrediction", "true");
         ParseToString("nihao");
         Check(sConfig->get_smart_prediction(), "prediction enable is synchronized");
+		Check(ParseToString("zongguo") == baseline, "baseline is restored before fuzzy toggle");
 		writer.setConfig("fuzzyChoice", "1000000000000000000");
 
 		// --- 3. 下一次解析入口即生效（门闸放行 → 快照重建 → buildFuzzyMap 读新快照） ---

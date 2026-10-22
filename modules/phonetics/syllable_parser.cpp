@@ -788,25 +788,15 @@ void coral::phonetics::SyllableParser::build_fuzzy_map()
 	if (fuzzy_choices == last_fuzzy_vector_)
 		return;
 
+	// 配置变化后，同一个拼音也必须重新解析，不能沿用上一规则的候选。
+	clear_pinyin_model_cache();
 	fuzzy_initials_.clear();
 	fuzzy_finals_.clear();
 	fuzzy_alls_.clear();
+	// 先移除上一规则添加的专用音节，再装配当前规则。
+	for (const auto syllable : fuzzy_only_syllables_)
+		syllables_view_.erase(syllable);
 	fuzzy_only_syllables_.clear();
-	auto removeFuzzySyllables = [&](size_t index, const auto& syllables) {
-		if (index < fuzzy_choices.size() && fuzzy_choices[index]) {
-			for (const auto& syllable : syllables) {
-				if(syllables_view_.count(syllable))
-					syllables_view_.erase(syllable);
-			}
-		}
-	};
-	removeFuzzySyllables(0, fuzzyOnlySyllables_Z_ZH);
-	removeFuzzySyllables(1, fuzzyOnlySyllables_C_CH);
-	removeFuzzySyllables(2, fuzzyOnlySyllables_S_SH);
-	removeFuzzySyllables(3, fuzzyOnlySyllables_L_N);
-	removeFuzzySyllables(4, fuzzyOnlySyllables_G_K);
-	removeFuzzySyllables(5, fuzzyOnlySyllables_F_H);
-	removeFuzzySyllables(6, fuzzyOnlySyllables_R_L);
 
 	struct FuzzyDef {
 		std::string_view original;
@@ -1056,6 +1046,7 @@ bool coral::phonetics::SyllableParser::parse_input(
         clear_pinyin_model_cache();
         cached_condition_ = active_condition;
     }
+    build_fuzzy_map();
     parseMode = get_parse_mode(pystring, offset + solutionSize);
 	if (parseMode != ParseMode::CacheOnly)
 	{
@@ -1081,8 +1072,6 @@ bool coral::phonetics::SyllableParser::parse_input(
 			// 该声母开头的全部单字重新搜入候选。a/e/o 等完整音节不受影响。
 			if (processedPystring.size() == 1 && coral::phonetics::syntax::is_jian_pin(processedPystring))
 				context.directCandidateBudgetOverride = kSingleJianpinCandidateLimit;
-
-			build_fuzzy_map();
 
 			// 1. 获取拼音序列
 			CHECK_ERROR_MSG(get_pinyin_sequence(context),

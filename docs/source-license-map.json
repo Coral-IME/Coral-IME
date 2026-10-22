@@ -3,6 +3,12 @@
   "project_license": "MPL-2.0",
   "license_documents": ["LICENSE", "LICENSING.md", "THIRD_PARTY_NOTICES.md"],
   "project_paths": [
+    ".github/workflows/official.yml",
+    "resources/official-data.json",
+    "tools/release/official_data.py",
+    "tools/release/check_official_runtime.py",
+    "tests/release/test_official_data.py",
+    "docs/official-data-release.md",
     ".github/workflows/windows.yml",
     "docs/github-actions.md",
     "tools/release/demo_release.py",

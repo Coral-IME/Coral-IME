@@ -1,0 +1,162 @@
+name: Official dictionary test installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '四段程序版本；生成含正式词库的未签名测试包'
+        type: string
+        default: '1.0.0.4'
+        required: true
+      create_draft:
+        description: '成功后创建测试版 Release 草稿'
+        type: boolean
+        default: true
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: official-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONUTF8: '1'
+  PYTHONDONTWRITEBYTECODE: '1'
+  CORAL_CI_VERSION: ${{ inputs.version }}
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  checks:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/windows.yml
+    with:
+      version: ${{ inputs.version }}
+      build_only: true
+
+  package:
+    name: Build and verify official runtime
+    if: github.ref == 'refs/heads/main'
+    needs: checks
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - name: Preserve repository file bytes
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Read locked data revision
+        id: data
+        run: |
+          python tools/release/demo_release.py validate-version "$env:CORAL_CI_VERSION"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -c "import sys; sys.path.insert(0,'tools/release'); from official_data import load_lock; load_lock('resources/official-data.json')"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $lock = Get-Content resources/official-data.json -Raw | ConvertFrom-Json
+          "repository=$($lock.repository)" >> $env:GITHUB_OUTPUT
+          "revision=$($lock.revision)" >> $env:GITHUB_OUTPUT
+          "version=$($lock.data_version)" >> $env:GITHUB_OUTPUT
+      - name: Read private release inputs
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ steps.data.outputs.repository }}
+          ref: ${{ steps.data.outputs.revision }}
+          ssh-key: ${{ secrets.OFFICIAL_DATA_SSH_KEY }}
+          persist-credentials: false
+          path: build/official-data-repository
+      - name: Verify and extract official inputs
+        run: >-
+          python tools/release/official_data.py unpack --repository-dir build/official-data-repository
+          --lock resources/official-data.json --output-dir build/official-inputs
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: windows-x64-release-binaries
+          path: build/ci-x64/coralpinyin/Release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: windows-x86-tsf
+          path: build/ci-x86/coralpinyin/Release
+      - name: Install data build dependencies
+        run: python -m pip install -r tools/data/requirements.txt
+      - name: Build paired official runtime
+        env:
+          DATA_VERSION: ${{ steps.data.outputs.version }}
+        run: >-
+          python tools/data/build_runtime.py --source-dir build/official-inputs/source
+          --model-dir build/official-inputs/models --output-dir build/official-runtime
+          --resource-compiler build/ci-x64/coralpinyin/Release/coral_resource_compiler.exe
+          --lexicon-builder build/ci-x64/coralpinyin/Release/coral_lexicon_builder.exe
+          --bundle-decoder build/ci-x64/coralpinyin/Release/coral_bundle_decoder.exe
+          --data-version "$env:DATA_VERSION" --engine-version "$env:GITHUB_SHA"
+      - name: Check official input behavior
+        run: >-
+          python tools/release/check_official_runtime.py --binaries build/ci-x64/coralpinyin/Release
+          --runtime-dir build/official-runtime --output-dir build/official-checks
+      - name: Find NSIS
+        run: |
+          $compiler = Get-Command makensis.exe -ErrorAction SilentlyContinue
+          $path = if ($compiler) { $compiler.Source } else { Join-Path ${env:ProgramFiles(x86)} 'NSIS/makensis.exe' }
+          if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw 'NSIS compiler was not found.' }
+          "CORAL_NSIS=$path" >> $env:GITHUB_ENV
+      - name: Compile unsigned installer
+        run: >-
+          python tools/release/package_windows.py --build-dir build/ci-x64
+          --x86-tsf build/ci-x86/coralpinyin/Release/coraltsf32.dll
+          --runtime-dir build/official-runtime --output-dir build/official-package
+          --version "$env:CORAL_CI_VERSION" --makensis "$env:CORAL_NSIS" --sign-mode None --manual-launch
+      - name: Record source and checksums
+        run: >-
+          python tools/release/demo_release.py bundle --edition official
+          --data-lock resources/official-data.json --test-summary build/official-checks/summary.json
+          --package-dir build/official-package --output-dir build/official-release
+          --version "$env:CORAL_CI_VERSION" --source-sha "$env:GITHUB_SHA"
+          --repository "$env:GITHUB_REPOSITORY"
+          --run-url "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+      - name: Save official test installer
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: coral-pinyin-official-installer
+          path: build/official-release/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Save public check summary
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: official-data-check-summary
+          path: build/official-checks/summary.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  draft:
+    name: Draft official data test release
+    if: inputs.create_draft && github.ref == 'refs/heads/main'
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: coral-pinyin-official-installer
+          path: dist
+      - name: Create draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+          RELEASE_TAG: v${{ inputs.version }}-rc.${{ github.run_id }}
+        run: |
+          gh release create "$RELEASE_TAG" dist/*.exe dist/SHA256SUMS.txt dist/BUILD_INFO.json dist/package-manifest.json dist/RELEASE_NOTES.md \
+            --target "$SOURCE_SHA" --title "珊瑚输入法 正式词库测试版 $CORAL_CI_VERSION" \
+            --notes-file dist/RELEASE_NOTES.md --draft --prerelease --latest=false
