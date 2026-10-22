@@ -8,4 +8,4 @@ target_link_libraries(namespace_peer PRIVATE coral_preferences)
 coral_target_common(namespace_peer)
 add_test(NAME configuration_namespace COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_namespace.py
     $<TARGET_FILE:namespace_peer>)
-set_tests_properties(configuration_namespace PROPERTIES TIMEOUT 30)
+set_tests_properties(zip_archive_interop configuration_namespace PROPERTIES TIMEOUT 30)

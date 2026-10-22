@@ -10,7 +10,11 @@ SetCompressor zlib
 
 ; HM NIS Edit Wizard helper defines
 !define PRODUCT_NAME "coralpinyin"
+!ifdef CORAL_DEMO_PACKAGE
+!define PRODUCT_NAME_CN "珊瑚输入法（演示版）"
+!else
 !define PRODUCT_NAME_CN "珊瑚输入法"
+!endif
 !define PRODUCT_PUBLISHER "Coral-IME"
 !define PRODUCT_WEB_SITE "https://coralime.cn"
 !define PRODUCT_DIR_REGKEY "Software\Microsoft\Windows\CurrentVersion\App Paths\${CORAL_ID_SETTINGS_EXE}"
@@ -77,7 +81,11 @@ SetCompressor zlib
 !insertmacro MUI_PAGE_INSTFILES
 ; Finish page
 !define MUI_FINISHPAGE_TITLE "“$(^Name)” 安装程序结束"
+!ifdef CORAL_DEMO_PACKAGE
+!define MUI_FINISHPAGE_TEXT "“$(^Name) ${PRODUCT_VERSION}” 已经成功安装到本机。\r\n\r\n请从开始菜单打开珊瑚输入法。本演示版仅含小型测试词库，关闭自动更新。\r\n\r\n点击[完成(F)]关闭此安装程序。"
+!else
 !define MUI_FINISHPAGE_TEXT "“$(^Name) ${PRODUCT_VERSION}” 已经成功安装到本机。\r\n\r\n点击[完成(F)]关闭此安装程序。"
+!endif
 !define MUI_FINISHPAGE_NOREBOOTSUPPORT
 !insertmacro MUI_PAGE_FINISH
 ; Uninstaller pages
@@ -602,7 +610,10 @@ Section -Post
   ${If} $0 != 0
     MessageBox MB_ICONEXCLAMATION "安装已完成，但旧版进程仍在运行。请注销或重启 Windows 后使用新版本。"
   ${EndIf}
+  ; 演示包由用户从开始菜单启动，不嵌入本地额外安装的启动插件。
+!ifndef CORAL_DEMO_PACKAGE
   Call EndRun
+!endif
   ; 清理安装标记：HKLM+ HKCU
   DeleteRegValue ${PRODUCT_UNINST_ROOT_KEY_HKLM} "${PRODUCT_UNINST_KEY}" "IsReinstalling"
   DeleteRegValue ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "IsReinstalling"
@@ -693,9 +704,11 @@ Function un.onUninstSuccess
   MessageBox MB_ICONINFORMATION|MB_OK "$(^Name) 现已从您的计算机移除"
 FunctionEnd
 
+!ifndef CORAL_DEMO_PACKAGE
 Function EndRun
   ShellExecAsUser::ShellExecAsUser "" "${NOW_INST_DIR}\${CORAL_ID_SETTINGS_EXE}" "--startup-type=3"
 FunctionEnd
+!endif
 
 Function KillRunningProc
   ; HKLM Uninstall 统一使用 32 位视图，优先读 HKLM

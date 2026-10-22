@@ -113,8 +113,9 @@ int main(int argc, char** argv) {
         ownerClass.hInstance = GetModuleHandleW(nullptr);
         ownerClass.lpszClassName = L"LexiconImportTestOwner";
         Require(RegisterClassW(&ownerClass) != 0, "Cannot register test owner");
+        // 隐藏的无边框父窗不受远程桌面的最大窗口跟踪尺寸限制，保持缩放断言确定。
         parent = CreateWindowExW(0, ownerClass.lpszClassName, L"Import test owner",
-            WS_OVERLAPPED | WS_CAPTION | WS_THICKFRAME, 0, 0, 1000, 760, nullptr, nullptr, ownerClass.hInstance, nullptr);
+            WS_POPUP, 0, 0, 1000, 760, nullptr, nullptr, ownerClass.hInstance, nullptr);
         Require(parent != nullptr, "Cannot create test parent");
         const auto open = [&]() {
             LexiconImportDialog::showInstance(parent);
@@ -262,7 +263,8 @@ int main(int argc, char** argv) {
         LoadFile(child, *d, plain.wstring());
         SavePanel(child, *d, output / "13-preview-dark.bmp");
         d->scale = 1.5f;
-        SetWindowPos(parent, nullptr, 0, 0, 1600, 1200, SWP_NOMOVE | SWP_NOZORDER);
+        Require(SetWindowPos(parent, nullptr, 0, 0, 1600, 1200, SWP_NOMOVE | SWP_NOZORDER) != FALSE,
+            "Cannot resize test parent");
         LexiconImportDialog::resizeToParent();
         const auto large = Panel(child, *d);
         Require(large.right - large.left == 960 && large.bottom - large.top == 960, "DPI scale failed");

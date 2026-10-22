@@ -22,6 +22,12 @@
 
 当前产品的语音入口屏蔽，在线词库服务默认未配置而禁用。崩溃诊断仅在本地保存，当前没有内置上传入口。联网与本地数据处理的详细说明见 [隐私政策](docs/legal/隐私政策.md)。
 
+## 下载与自动构建
+
+安装包见 [Releases](https://github.com/Coral-IME/Coral-IME/releases)，请阅读各版本说明区分测试包、演示包和正式版；GitHub 自动提供的 Source code 压缩包不是安装程序。
+
+[Windows 自动构建](https://github.com/Coral-IME/Coral-IME/actions/workflows/windows.yml)检查 x64 Debug/Release、运行默认测试、编译 x86 文本服务组件，并生成未签名演示安装包。演示包仅含自制小词库，关闭自动更新，不代表正式输入质量。下载、Release 草稿和实际安装验收步骤见 [自动构建说明](docs/github-actions.md)。
+
 ## 工程与开发
 
 ### 目录说明
