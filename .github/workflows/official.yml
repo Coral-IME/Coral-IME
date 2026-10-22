@@ -33,10 +33,9 @@ defaults:
 jobs:
   checks:
     if: github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/windows.yml
+    uses: ./.github/workflows/windows-build.yml
     with:
       version: ${{ inputs.version }}
-      build_only: true
 
   package:
     name: Build and verify official runtime
