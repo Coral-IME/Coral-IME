@@ -5,14 +5,6 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_call:
-    inputs:
-      version:
-        required: true
-        type: string
-      build_only:
-        default: false
-        type: boolean
   workflow_dispatch:
     inputs:
       version:
@@ -43,101 +35,14 @@ defaults:
     shell: pwsh
 
 jobs:
-  build:
-    name: x64 ${{ matrix.configuration }}
-    runs-on: windows-2022
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        configuration: [Debug, Release]
-    steps:
-      - name: Preserve repository file bytes
-        run: git config --global core.autocrlf false
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: '3.12'
-      - name: Validate release tooling
-        run: |
-          python tools/release/demo_release.py validate-version "$env:CORAL_CI_VERSION"
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python tools/checks/product_identity.py
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python -m unittest discover -s tests/release -p 'test_*.py'
-      - name: Configure
-        run: >-
-          cmake -S . -B build/ci-x64 -G "Visual Studio 17 2022" -A x64
-          -DCMAKE_SYSTEM_VERSION=10.0 -DPython3_EXECUTABLE="$((Get-Command python).Source)"
-          -DCORAL_APP_VERSION="$env:CORAL_CI_VERSION" -DCORAL_ENABLE_UPDATES=OFF
-          -DBUILD_TESTING=ON -DCORAL_BUILD_DEMO_DATA=ON
-      - name: Build
-        env:
-          CONFIGURATION: ${{ matrix.configuration }}
-        run: cmake --build build/ci-x64 --config "$env:CONFIGURATION" --parallel 2 -- /nr:false
-      - name: Test
-        env:
-          CONFIGURATION: ${{ matrix.configuration }}
-        run: >-
-          ctest --test-dir build/ci-x64 -C "$env:CONFIGURATION"
-          --no-tests=error --timeout 120 --output-on-failure --output-junit test-results.xml
-      - name: Save Release binaries
-        if: matrix.configuration == 'Release'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: windows-x64-release-binaries
-          path: |
-            build/ci-x64/coralpinyin/Release/*.exe
-            build/ci-x64/coralpinyin/Release/*.dll
-          if-no-files-found: error
-          retention-days: 7
-      - name: Save test and configure logs
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: windows-x64-${{ matrix.configuration }}-logs
-          path: |
-            build/ci-x64/test-results.xml
-            build/ci-x64/Testing/Temporary/*.log
-            build/ci-x64/CMakeFiles/CMakeConfigureLog.yaml
-          if-no-files-found: warn
-          retention-days: 14
-
-  tsf32:
-    name: x86 text service
-    runs-on: windows-2022
-    timeout-minutes: 30
-    steps:
-      - name: Preserve repository file bytes
-        run: git config --global core.autocrlf false
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: '3.12'
-      - name: Validate version
-        run: python tools/release/demo_release.py validate-version "$env:CORAL_CI_VERSION"
-      - name: Configure
-        run: >-
-          cmake -S . -B build/ci-x86 -G "Visual Studio 17 2022" -A Win32
-          -DCMAKE_SYSTEM_VERSION=10.0 -DCORAL_APP_VERSION="$env:CORAL_CI_VERSION"
-          -DCORAL_ENABLE_UPDATES=OFF -DBUILD_TESTING=OFF -DCORAL_BUILD_DEMO_DATA=OFF
-      - name: Build text service
-        run: cmake --build build/ci-x86 --config Release --target coraltsf32 --parallel 2 -- /nr:false
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: windows-x86-tsf
-          path: build/ci-x86/coralpinyin/Release/coraltsf32.dll
-          if-no-files-found: error
-          retention-days: 7
+  checks:
+    uses: ./.github/workflows/windows-build.yml
+    with:
+      version: ${{ inputs.version || '0.0.0.0' }}
 
   package:
     name: Demo installer
-    if: ${{ !inputs.build_only }}
-    needs: [build, tsf32]
+    needs: checks
     runs-on: windows-2022
     timeout-minutes: 20
     steps:
@@ -208,7 +113,7 @@ jobs:
 
   draft:
     name: Draft demo release
-    if: github.event_name == 'workflow_dispatch' && !inputs.build_only && inputs.create_draft && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && inputs.create_draft && github.ref == 'refs/heads/main'
     needs: package
     runs-on: ubuntu-latest
     timeout-minutes: 5

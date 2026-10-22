@@ -1,6 +1,6 @@
 # 正式词库测试安装包
 
-`Official dictionary test installer` 是主分支手动工作流。它复用默认 Windows CI 的 x64 Debug/Release 编译和测试、x86 文本服务组件构建，再生成含正式词库的未签名测试安装包。普通提交和公开 PR 的自动构建继续只使用公开演示夹具。
+`Official dictionary test installer` 是主分支手动工作流。它与默认 Windows CI 共用只读的 `windows-build.yml`，执行 x64 Debug/Release 编译和测试、x86 文本服务组件构建，再生成含正式词库的未签名测试安装包。普通提交和公开 PR 的自动构建继续只使用公开演示夹具。仅创建草稿的独立任务申请写入 Release 的权限。
 
 ## 数据和访问权限
 
