@@ -1,0 +1,217 @@
+name: Windows CI and demo installer
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '四段程序版本，例如 0.0.0.0；仅生成演示包'
+        required: true
+        default: '0.0.0.0'
+        type: string
+      create_draft:
+        description: '构建成功后创建演示版 Release 草稿（仅限 main）'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PYTHONUTF8: '1'
+  PYTHONDONTWRITEBYTECODE: '1'
+  CORAL_CI_VERSION: ${{ inputs.version || '0.0.0.0' }}
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  build:
+    name: x64 ${{ matrix.configuration }}
+    runs-on: windows-2022
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, Release]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Validate release tooling
+        run: |
+          python tools/release/demo_release.py validate-version "$env:CORAL_CI_VERSION"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python tools/checks/product_identity.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests/release -p 'test_*.py'
+      - name: Configure
+        run: >-
+          cmake -S . -B build/ci-x64 -G "Visual Studio 17 2022" -A x64
+          -DCMAKE_SYSTEM_VERSION=10.0 -DPython3_EXECUTABLE="$((Get-Command python).Source)"
+          -DCORAL_APP_VERSION="$env:CORAL_CI_VERSION" -DCORAL_ENABLE_UPDATES=OFF
+          -DBUILD_TESTING=ON -DCORAL_BUILD_DEMO_DATA=ON
+      - name: Build
+        env:
+          CONFIGURATION: ${{ matrix.configuration }}
+        run: cmake --build build/ci-x64 --config "$env:CONFIGURATION" --parallel 2 -- /nr:false
+      - name: Test
+        env:
+          CONFIGURATION: ${{ matrix.configuration }}
+        run: >-
+          ctest --test-dir build/ci-x64 -C "$env:CONFIGURATION"
+          --no-tests=error --output-on-failure --output-junit test-results.xml
+      - name: Save Release binaries
+        if: matrix.configuration == 'Release'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-x64-release-binaries
+          path: |
+            build/ci-x64/coralpinyin/Release/*.exe
+            build/ci-x64/coralpinyin/Release/*.dll
+          if-no-files-found: error
+          retention-days: 7
+      - name: Save test and configure logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-x64-${{ matrix.configuration }}-logs
+          path: |
+            build/ci-x64/test-results.xml
+            build/ci-x64/Testing/Temporary/*.log
+            build/ci-x64/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: warn
+          retention-days: 14
+
+  tsf32:
+    name: x86 text service
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Validate version
+        run: python tools/release/demo_release.py validate-version "$env:CORAL_CI_VERSION"
+      - name: Configure
+        run: >-
+          cmake -S . -B build/ci-x86 -G "Visual Studio 17 2022" -A Win32
+          -DCMAKE_SYSTEM_VERSION=10.0 -DCORAL_APP_VERSION="$env:CORAL_CI_VERSION"
+          -DCORAL_ENABLE_UPDATES=OFF -DBUILD_TESTING=OFF -DCORAL_BUILD_DEMO_DATA=OFF
+      - name: Build text service
+        run: cmake --build build/ci-x86 --config Release --target coraltsf32 --parallel 2 -- /nr:false
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-x86-tsf
+          path: build/ci-x86/coralpinyin/Release/coraltsf32.dll
+          if-no-files-found: error
+          retention-days: 7
+
+  package:
+    name: Demo installer
+    needs: [build, tsf32]
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: windows-x64-release-binaries
+          path: build/ci-x64/coralpinyin/Release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: windows-x86-tsf
+          path: build/ci-x86/coralpinyin/Release
+      - name: Install data build dependencies
+        run: python -m pip install -r tools/data/requirements.txt
+      - name: Prepare public demo inputs
+        run: python tools/data/prepare_demo_source.py --output-dir build/ci-demo-source
+      - name: Build paired demo runtime
+        run: >-
+          python tools/data/build_runtime.py --source-dir build/ci-demo-source
+          --output-dir build/ci-demo-runtime
+          --resource-compiler build/ci-x64/coralpinyin/Release/coral_resource_compiler.exe
+          --lexicon-builder build/ci-x64/coralpinyin/Release/coral_lexicon_builder.exe
+          --bundle-decoder build/ci-x64/coralpinyin/Release/coral_bundle_decoder.exe
+          --data-version demo-v1 --engine-version "$env:GITHUB_SHA"
+      - name: Find NSIS
+        run: |
+          $compiler = Get-Command makensis.exe -ErrorAction SilentlyContinue
+          $path = if ($compiler) { $compiler.Source } else { Join-Path ${env:ProgramFiles(x86)} 'NSIS/makensis.exe' }
+          if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw 'NSIS compiler was not found.' }
+          "CORAL_NSIS=$path" >> $env:GITHUB_ENV
+      - name: Compile unsigned installer
+        run: >-
+          python tools/release/package_windows.py --build-dir build/ci-x64
+          --x86-tsf build/ci-x86/coralpinyin/Release/coraltsf32.dll
+          --runtime-dir build/ci-demo-runtime --output-dir build/ci-demo-package
+          --version "$env:CORAL_CI_VERSION" --makensis "$env:CORAL_NSIS" --sign-mode None
+      - name: Record source and checksums
+        run: >-
+          python tools/release/demo_release.py bundle --package-dir build/ci-demo-package
+          --output-dir build/ci-demo-release --version "$env:CORAL_CI_VERSION"
+          --source-sha "$env:GITHUB_SHA" --repository "$env:GITHUB_REPOSITORY"
+          --run-url "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+      - name: Save demo installer
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: coral-pinyin-demo-installer
+          path: build/ci-demo-release/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Save runtime and packaging logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: demo-packaging-logs
+          path: |
+            build/ci-demo-runtime/logs/*.log
+            build/ci-demo-runtime/build-record.json
+            build/ci-demo-package/nsis.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  draft:
+    name: Draft demo release
+    if: github.event_name == 'workflow_dispatch' && inputs.create_draft && github.ref == 'refs/heads/main'
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: coral-pinyin-demo-installer
+          path: dist
+      - name: Create draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+          DEMO_TAG: v${{ inputs.version }}-demo.${{ github.run_id }}
+        run: |
+          gh release create "$DEMO_TAG" dist/*.exe dist/SHA256SUMS.txt dist/BUILD_INFO.json dist/package-manifest.json \
+            --target "$SOURCE_SHA" --title "珊瑚输入法 演示版 $CORAL_CI_VERSION" \
+            --notes-file dist/RELEASE_NOTES.md --draft --prerelease --latest=false
