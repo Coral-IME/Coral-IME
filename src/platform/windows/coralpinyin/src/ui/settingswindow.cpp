@@ -110,6 +110,7 @@ namespace
 		ID_R_JIAN, ID_R_FAN,
 		ID_R_BANJIAO, ID_R_QUANJIAO,
 		ID_R_ENPUNCT, ID_R_CORRECT, ID_R_FUZZY,
+        ID_R_DEFAULT_INPUT,
 		// 按键页
 		ID_K_CS = 0x1200, ID_K_SHIFT, ID_K_CTRL,
 		ID_K_WIDTHON, ID_K_WIDTHOFF,
@@ -2789,6 +2790,9 @@ void SettingsWindow::createRoutinePage()
 	b.toggle(ID_L_DIGITSYMBOL);
 	b.row(L"字母后输入英文符号");
 	b.toggle(ID_L_LETTERSYMBOL);
+    b.section(L"系统默认输入法");
+    b.row(L"默认输入法", L"打开 Windows 设置，由你选择系统默认输入法");
+    b.button(ID_R_DEFAULT_INPUT, L"设置默认输入法");
 	b.finish();
 }
 
@@ -3660,6 +3664,13 @@ void SettingsWindow::onCommand(WPARAM wParam, LPARAM lParam)
 	case ID_R_ENPUNCT: sConfig->setIsUseEnglishPunctuation(checked); break;
 	case ID_R_CORRECT: sConfig->setPinyinCorrection(checked); break;
 	case ID_R_FUZZY: FuzzyPinyinDialog::showInstance(s_hwnd); break;
+    case ID_R_DEFAULT_INPUT:
+        if (code == BN_CLICKED && reinterpret_cast<INT_PTR>(ShellExecuteW(s_hwnd, L"open",
+            L"ms-settings:keyboard-advanced", nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
+            MessageBoxW(s_hwnd,
+                L"无法打开 Windows 设置。请在系统设置中搜索“高级键盘设置”，在“替代默认输入法”中自行选择输入法。",
+                L"设置默认输入法", MB_OK | MB_ICONINFORMATION);
+        break;
 
 	// ---- 按键页 ----
 	case ID_K_CS: sConfig->setChangeLanguageModeShortCut("isCtrlAndSpaceChangeLanguageModeOpen", checked); break;

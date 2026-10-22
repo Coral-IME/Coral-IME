@@ -9,8 +9,17 @@ int WINAPI settings_test_message_box(HWND, LPCWSTR text, LPCWSTR, UINT) {
     shortcut_messages.emplace_back(text);
     return IDOK;
 }
+// 捕获系统设置启动请求，测试不打开系统窗口或更改默认输入法。
+std::vector<std::wstring> settings_launches;
+INT_PTR settings_launch_result = 33;
+HINSTANCE WINAPI settings_test_shell_execute(HWND, LPCWSTR, LPCWSTR file, LPCWSTR, LPCWSTR, INT) {
+    settings_launches.emplace_back(file);
+    return reinterpret_cast<HINSTANCE>(settings_launch_result);
+}
 #define MessageBoxW settings_test_message_box
+#define ShellExecuteW settings_test_shell_execute
 #include "../../src/platform/windows/coralpinyin/src/ui/settingswindow.cpp"
+#undef ShellExecuteW
 #undef MessageBoxW
 #include <iostream>
 #include <stdexcept>
@@ -103,6 +112,23 @@ void check_scale(HWND window, UINT dpi, const std::filesystem::path& output)
     SendMessageW(toggle, WM_LBUTTONUP, 0, MAKELPARAM(scale.pixels(20), scale.pixels(12)));
     require(SendMessageW(toggle, BM_GETCHECK, 0, 0) != before, "Scaled toggle cannot be clicked");
     save_page(window, output / ("routine-" + std::to_string(dpi) + ".png"));
+    HWND default_input = GetDlgItem(SettingsWindow::s_pages[0], ID_R_DEFAULT_INPUT);
+    require(default_input && IsWindowEnabled(default_input), "Default input method entry is missing or disabled");
+    SettingsWindow::scrollPage(0, 100000);
+    RECT entry{}, viewport_bounds{};
+    GetWindowRect(default_input, &entry);
+    GetWindowRect(viewport, &viewport_bounds);
+    require(entry.top >= viewport_bounds.top && entry.bottom <= viewport_bounds.bottom,
+        "Cannot scroll the default input method entry into view");
+    const auto launches_before = settings_launches.size();
+    const auto messages_before = shortcut_messages.size();
+    SendMessageW(default_input, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(scale.pixels(20), scale.pixels(12)));
+    SendMessageW(default_input, WM_LBUTTONUP, 0, MAKELPARAM(scale.pixels(20), scale.pixels(12)));
+    require(settings_launches.size() == launches_before + 1 && settings_launches.back() == L"ms-settings:keyboard-advanced",
+        "Default input method entry did not open advanced keyboard settings once");
+    require(shortcut_messages.size() == messages_before, "Successful settings launch displayed an error");
+    save_page(window, output / ("routine-default-input-" + std::to_string(dpi) + ".png"));
+    SettingsWindow::scrollPage(0, 0);
     SettingsWindow::switchPage(1);
     HWND paging = GetDlgItem(SettingsWindow::s_pages[1], ID_K_FLIPMINUS);
     require(paging && SendMessageW(paging, BM_GETCHECK, 0, 0) == BST_UNCHECKED,
@@ -445,6 +471,7 @@ int main(int argc, char** argv)
             HWND window = CreateWindowExW(0, kWindowClass, L"Settings DPI test", WS_OVERLAPPED | WS_CAPTION | WS_CLIPCHILDREN,
                 0, 0, 1500, 1050, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
             require(window != nullptr, "Cannot create production settings window");
+            require(settings_launches.empty(), "Opening preferences launched system settings automatically");
             require(AreDpiAwarenessContextsEqual(GetWindowDpiAwarenessContext(window),
                 DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2), "Settings window did not opt into per-monitor V2");
             require(g_dpi.dpi() == GetDpiForWindow(window), "Opening scale differs from the actual monitor DPI");
@@ -457,6 +484,17 @@ int main(int argc, char** argv)
                 check_scale(window, dpi, output);
                 std::cout << "[PASS] DPI " << dpi << " fonts, caches, navigation, scrolling, toggle, slider, combo\n";
             }
+            HWND default_input = GetDlgItem(SettingsWindow::s_pages[0], ID_R_DEFAULT_INPUT);
+            for (const INT_PTR failure : { 0, 32 }) {
+                settings_launch_result = failure;
+                const auto messages_before = shortcut_messages.size();
+                SendMessageW(SettingsWindow::s_pages[0], WM_COMMAND, MAKEWPARAM(ID_R_DEFAULT_INPUT, BN_CLICKED),
+                    reinterpret_cast<LPARAM>(default_input));
+                require(shortcut_messages.size() == messages_before + 1 &&
+                    shortcut_messages.back().find(L"高级键盘设置") != std::wstring::npos,
+                    "Failed settings launch did not explain the manual path");
+            }
+            settings_launch_result = 33;
             SettingsWindow::switchPage(2);
             SettingsWindow::scrollPage(2, kWheelStep);
             RECT suggested{ 0, 0, 1500, 1050 };
