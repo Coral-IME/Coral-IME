@@ -143,7 +143,7 @@ namespace
 		ID_P_CLIPSWITCH, ID_P_CLIPS, ID_P_CLEARCLIPS,
 		// 高级页
 		ID_S_UMODE = 0x1500, ID_S_VMODE, ID_S_UHELP, ID_S_VHELP,
-        ID_S_TRANSLATION, ID_S_KEYID, ID_S_SECRET, ID_S_SAVEKEY, ID_S_TARGET, ID_S_TRANSLATION_HELP, ID_S_PREDICTION, ID_S_SHORTCUT,
+        ID_S_TRANSLATION, ID_S_KEYID, ID_S_SECRET, ID_S_SAVEKEY, ID_S_TARGET, ID_S_TRANSLATION_HELP, ID_S_PREDICTION, ID_S_SHORTCUT, ID_S_CANDIDATES,
 		// 关于页
         ID_V_ENABLED = 0x1800, ID_V_KEYID, ID_V_SECRET, ID_V_SAVEKEY, ID_V_SHORTCUT, ID_V_MIC, ID_V_PUSHTOTALK,
 		ID_AB_CHECKUPDATE = 0x1700, ID_AB_EULA, ID_AB_PRIVACY, ID_AB_AUTOCHECK,
@@ -1723,6 +1723,14 @@ namespace
 			m_y += 20 + 2;
 		}
 
+        void hint(const wchar_t* message)
+        {
+            flushRow();
+            text({ m_left + Skin().rowPaddingLeft, m_y + 2, m_right - Skin().rowPaddingRight, m_y + 20 },
+                message, F_DESC, &SettingsSkin::sub);
+            m_y += 24;
+        }
+
 		void section(const wchar_t* title)
 		{
 			closeCard();
@@ -3004,6 +3012,9 @@ void SettingsWindow::createSeniorPage()
 	b.section(L"高级模式");
     b.row(L"智能预测", L"结合连续输入的中文推荐候选；切换窗口后清空上下文");
     b.toggle(ID_S_PREDICTION);
+    b.row(L"智能候选", L"使用gpt2进行长候选词优化，该功能可能会造成一定卡顿");
+    b.toggle(ID_S_CANDIDATES);
+    b.hint(L"修改后重启输入法生效");
 	b.row(L"U 模式", L"笔画/拆字查字，uu 输入分类符号；双拼用 Shift+U 进入");
 	b.toggle(ID_S_UMODE);
     b.button(ID_S_UHELP, L"使用方法");
@@ -3570,6 +3581,7 @@ void SettingsWindow::loadSeniorPage()
 		if (c) SendMessageW(c, BM_SETCHECK, on ? BST_CHECKED : BST_UNCHECKED, 0);
 	};
 	check(ID_S_PREDICTION, sConfig->get_smart_prediction());
+    check(ID_S_CANDIDATES, sConfig->get_smart_candidates());
 	check(ID_S_UMODE, sConfig->getIsUMode());
 	check(ID_S_VMODE, sConfig->getIsVMode());
     check(ID_S_TRANSLATION, sConfig->get_translation_enabled());
@@ -3863,6 +3875,7 @@ void SettingsWindow::onCommand(WPARAM wParam, LPARAM lParam)
         }
         break;
 	case ID_S_PREDICTION: sConfig->set_smart_prediction(checked); break;
+    case ID_S_CANDIDATES: sConfig->set_smart_candidates(checked); break;
 	case ID_S_UMODE: sConfig->setIsUMode(checked); break;
 	case ID_S_VMODE: sConfig->setIsVMode(checked); break;
     case ID_S_UHELP: MessageBoxW(s_hwnd, coral::composition::kUModeHelp, L"U / UU 模式使用方法", MB_OK | MB_ICONINFORMATION); break;

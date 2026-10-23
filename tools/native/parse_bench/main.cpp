@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cerrno>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -168,7 +169,7 @@ int main(int argc, char** argv) {
     std::ofstream missOut;
     if (!outCsv.empty()) {
         missOut.open(outCsv, std::ios::binary);
-        if (!missOut) { std::cerr << "cannot write details\n"; finish(2); }
+        if (!missOut) { std::cerr << "cannot write details: " << outCsv.string() << " errno=" << errno << '\n'; finish(2); }
         missOut << "file,line,pinyin,target,ok,count,target_rank,parse_us";
         for (int j = 1; j <= pageSize; ++j) missOut << ",candidate" << j;
         missOut << '\n' << std::fixed << std::setprecision(3);

@@ -234,6 +234,26 @@ void check_shortcut_conflicts(HWND window, const std::filesystem::path& output)
         SendMessageW(control, CB_SETCURSEL, index, 0);
         SendMessageW(advanced, WM_COMMAND, MAKEWPARAM(ID_S_SHORTCUT, CBN_SELENDOK), reinterpret_cast<LPARAM>(control));
     };
+    require(sConfig->get_smart_candidates() &&
+        SendMessageW(GetDlgItem(advanced, ID_S_CANDIDATES), BM_GETCHECK, 0, 0) == BST_CHECKED,
+        "Smart candidates must default on for existing configurations");
+    RECT prediction_bounds{}, candidates_bounds{};
+    GetWindowRect(GetDlgItem(advanced, ID_S_PREDICTION), &prediction_bounds);
+    GetWindowRect(GetDlgItem(advanced, ID_S_CANDIDATES), &candidates_bounds);
+    require(candidates_bounds.top > prediction_bounds.bottom, "Smart candidates must follow prediction");
+    SettingsIniManager candidates_saved(ini_path.string());
+    for (bool enabled : {false, true, false}) {
+        click(advanced, ID_S_CANDIDATES, enabled);
+        SettingsWindow::loadSeniorPage();
+        require(sConfig->get_smart_candidates() == enabled &&
+            SendMessageW(GetDlgItem(advanced, ID_S_CANDIDATES), BM_GETCHECK, 0, 0) ==
+                (enabled ? BST_CHECKED : BST_UNCHECKED),
+            "Smart candidates toggle readback lost the setting");
+        require(candidates_saved.load() &&
+            candidates_saved.getSettingsConfig<bool>("smartCandidates", !enabled) == enabled,
+            "Smart candidates setting was not persisted");
+    }
+    require(sConfig->get_smart_prediction(), "Smart candidates changed prediction");
     HWND about = SettingsWindow::s_pages[(int)SettingsEnum::SettingType::about];
     click(about, ID_AB_AUTOCHECK, false);
     SettingsIniManager update_saved(ini_path.string());

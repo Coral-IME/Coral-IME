@@ -1,4 +1,4 @@
-﻿/* languagemodel.coral 组合解码器：扁平词格 + CSR 分桶 + (position, gState) 组合态 A*。
+/* languagemodel.coral 组合解码器：扁平词格 + CSR 分桶 + (position, gState) 组合态 A*。
  * 语言模型状态 gState 随搜索节点传播（参考 proclass_coralpinyin 的 FstDecoder）：
  * start 态一元权重走 uni 直挂，非 start 态走 find(gState, phraseId)，
  * miss 经 backoff 链回退到 start 后取后继一元权重，云词典词不改变 gState。 */
@@ -33,6 +33,10 @@ public:
         condition_id_ = condition_influence_ > 0.0f ? id : kInvalidPhraseId;
     }
 	void set_direct_candidate_budget(const int budget) { direct_candidate_budget_ = budget; }
+#if CORAL_ENABLE_CHARACTER_MODEL
+    void set_character_context(std::string_view text) { character_context_.assign(text); }
+    void set_smart_candidates(bool enabled) { smart_candidates_ = enabled; }
+#endif
 	// 池子由 CPinyinModel 单例持有：解码器自己是 PinyinParseContext 的值成员，逐次解析新建，
 	// 池子放在这里活不过一次解析
 	void set_candidate_pool(vector<coral::phonetics::CandidateResult>* pool) { solution_pool_ = pool; }
@@ -85,6 +89,9 @@ private:
     }
 
 	bool find_best_paths(vector<coral::phonetics::CandidateResult>& pathSolutions, int targetK, coral::phonetics::Score& shortestPathCost, bool requireEnglish = false);
+#if CORAL_ENABLE_CHARACTER_MODEL
+    void rerank_character_paths(vector<coral::phonetics::CandidateResult>& paths) const;
+#endif
 	// Solution 的 sentence/pinyin/pinyinview 三个容器每轮解析都要重新 malloc，
 	// 而每轮末尾又被 clear 掉。这里把用完的 Solution 连同已分配好的缓冲一起收进池子，
 	// 下一轮直接取出来填，堆分配基本只在预热的头几次解析里发生。
@@ -113,8 +120,13 @@ private:
 	std::string extended_match_;
 	int direct_candidate_budget_{ kUnlimitedDirectCandidates };
 	bool candidates_truncated_ = false;
+    bool full_dictionary_hit_ = false;
     uint32_t condition_id_ = kInvalidPhraseId;
     float condition_influence_ = 0.7f;
+#if CORAL_ENABLE_CHARACTER_MODEL
+    std::string character_context_;
+    bool smart_candidates_ = true;
+#endif
 };
 } // 命名空间 coral::phonetics 结束（批次 2）
 

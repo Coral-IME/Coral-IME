@@ -116,6 +116,8 @@ public:
 	//U/V模式
 	bool get_smart_prediction() const;
     void set_smart_prediction(bool enabled);
+    bool get_smart_candidates() const;
+    void set_smart_candidates(bool enabled);
 	bool getIsUMode() const;
 	void setIsUMode(bool mode);
 	bool getIsVMode() const;

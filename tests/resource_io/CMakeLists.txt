@@ -34,7 +34,8 @@ if(TARGET coral_engine_core AND CORAL_BUILD_DEMO_DATA)
         target_compile_definitions(coral_runtime_restart_test PRIVATE OS_WINDOW Opencc_BUILT_AS_STATIC)
         coral_target_common(coral_runtime_restart_test)
         add_test(NAME runtime_restart COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/check_runtime_restart.py
-            $<TARGET_FILE:coral_runtime_restart_test> ${CMAKE_BINARY_DIR}/demo-runtime ${CMAKE_BINARY_DIR}/test-users/runtime-restart)
+            $<TARGET_FILE:coral_runtime_restart_test> ${CMAKE_BINARY_DIR}/demo-runtime ${CMAKE_BINARY_DIR}/test-users/runtime-restart
+            $<TARGET_FILE:coral_lexicon_builder>)
         set_tests_properties(runtime_restart PROPERTIES TIMEOUT 40 LABELS demo)
         add_test(NAME core_shutdown COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/check_core_shutdown.py
             $<TARGET_FILE:core_shutdown_test> ${CMAKE_BINARY_DIR}/demo-runtime ${CMAKE_BINARY_DIR}/test-users/core-shutdown)

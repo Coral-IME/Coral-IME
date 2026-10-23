@@ -217,6 +217,7 @@ const std::unordered_map<std::string, SettingsConfig::ConfigItem>& SettingsConfi
 		{"isFullWidth", ConfigItem("false", StoragePolicy::INI_ONLY)},
 		{"isUMode", ConfigItem("true", UV_MODE_POLICY)},
         {"smartPrediction", ConfigItem("true", UV_MODE_POLICY)},
+        {"smartCandidates", ConfigItem("true", UV_MODE_POLICY)},
 		{"isVMode", ConfigItem("true", UV_MODE_POLICY)},
 		{"isTraditionalChinese", ConfigItem("false", StoragePolicy::INI_ONLY)},
 		{"candidateCount", ConfigItem("7", StoragePolicy::SHARED_MEMORY)},
@@ -795,6 +796,16 @@ bool SettingsConfig::get_smart_prediction() const
 void SettingsConfig::set_smart_prediction(bool enabled)
 {
     setValue<bool>("smartPrediction", enabled);
+}
+
+bool SettingsConfig::get_smart_candidates() const
+{
+    return getValue<bool>("smartCandidates");
+}
+
+void SettingsConfig::set_smart_candidates(bool enabled)
+{
+    setValue<bool>("smartCandidates", enabled);
 }
 
 bool SettingsConfig::getIsUMode() const

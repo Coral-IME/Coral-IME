@@ -1,4 +1,4 @@
-﻿/*
+/*
 * @author: xuxiang
 * @date: 2021-6-10 11:30:25
 * @brief: 二元语言模型。按独立 magic 选择旧静态图或表面词概率模型。
@@ -13,6 +13,10 @@
 #include "../storage/phrase_archive_view.hpp"
 #include "verified_resource.h"
 #include "coral/language_model/surface_model.h"
+#if CORAL_ENABLE_CHARACTER_MODEL
+#include "coral/language_model/character_model.h"
+#endif
+#include <cmath>
 
 namespace coral::phonetics {
 class ContextScorer
@@ -38,10 +42,26 @@ public:
     }
     bool load_surface_model(const filesystem::path& model, const filesystem::path& lexicon,
         std::string& error);
+#if CORAL_ENABLE_CHARACTER_MODEL
+    void configure_character_model(const std::filesystem::path& default_path, bool enabled = true);
+    const coral::language_model::CharacterModel* character_model() const {
+        return character_model_.valid() ? &character_model_ : nullptr;
+    }
+    double character_weight() const { return character_weight_; }
+    bool load_character_model(const filesystem::path& path, double weight, std::string& error) {
+        if (!std::isfinite(weight) || weight < 0 || weight > 8) return false;
+        if (!character_model_.load_file(path, error)) return false;
+        character_weight_ = weight; return true;
+    }
+#endif
 
 private:
 	coral::storage::BigramMappedView gbin_view_;
     coral::language_model::SurfaceModel surface_model_;
+#if CORAL_ENABLE_CHARACTER_MODEL
+    coral::language_model::CharacterModel character_model_;
+    double character_weight_ = 0;
+#endif
 };
 } // 命名空间 coral::phonetics 结束（批次 2）
 

@@ -1,4 +1,4 @@
-﻿/*
+/*
  * @author: xuxiang
  * @date: 2021-6-10 17:19:57
  */
@@ -871,9 +871,13 @@ void coral::phonetics::SyllableParser::build_fuzzy_map()
 	is_enable_fuzzy_ = !(fuzzy_initials_.empty() && fuzzy_finals_.empty() && fuzzy_alls_.empty());
 }
 
-bool coral::phonetics::SyllableParser::load(const coral::phonetics::LexiconLocations& path, bool bSync, bool retryUntilSuccess)
+bool coral::phonetics::SyllableParser::load(const coral::phonetics::LexiconLocations& path, bool bSync,
+    bool retryUntilSuccess, bool smart_candidates)
 {
     std::lock_guard<std::mutex> lock(load_mutex_);
+    // 启动配置在模型加载前固定；等待旧任务后再改，后台重试继续沿用同一值。
+    finish_model_loading_locked();
+    smart_candidates_ = smart_candidates;
     return load_locked(path, bSync, retryUntilSuccess);
 }
 
@@ -978,6 +982,9 @@ bool coral::phonetics::SyllableParser::load_pinyin_model()
 	}
 
 	loggerCheck(language_model_.load_g_bin_only(path.bigramGBin, path.versionId), "bigram language model load failed", false);
+#if CORAL_ENABLE_CHARACTER_MODEL
+    language_model_.configure_character_model(path.bigramGBin.path.parent_path() / "character_model.coral", smart_candidates_);
+#endif
 	// 解析期的临时容器统一由 utils::ParseArena 供给，按需扩段、每次解析由
 	// ParseArenaScope 整体回收，不需要在这里预设各类型的容量
 	LOG_TRACE("Langengine: CPinyinModel load completed with status: " + to_string(loadResult));
@@ -1090,6 +1097,10 @@ bool coral::phonetics::SyllableParser::parse_input(
 			// 查询最长的有效中文后缀，语言模型不只看到最后一次选出的单字。
             context.languageDecoder.set_condition_id(active_condition.empty() ? kInvalidPhraseId :
                 lexicon_manager_.get_primary_lexicon().find_context_id(active_condition));
+#if CORAL_ENABLE_CHARACTER_MODEL
+            context.languageDecoder.set_smart_candidates(smart_candidates_);
+            if (smart_candidates_) context.languageDecoder.set_character_context(active_condition);
+#endif
 
             // 3. 初始化惰性语言模型解码器
 			CHECK_ERROR_MSG(init_language_decoder(context),

@@ -18,7 +18,7 @@ def set_config(path, key, value):
 
 
 def main():
-    executable, runtime, root = (Path(value).resolve() for value in sys.argv[1:])
+    executable, runtime, root, builder = (Path(value).resolve() for value in sys.argv[1:])
     token = uuid.uuid4().hex
     scope = root / token
     first, second, invalid = (scope / name for name in ('first', 'second', 'invalid'))
@@ -51,6 +51,26 @@ def main():
     user.mkdir()
     env = os.environ.copy()
     env.update(CORAL_TEST_NAMESPACE=token, CORAL_USER_DATA_DIR=str(user))
+    # 手写微型网络用于验证开关；不读取第三方权重或用户输入。
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'language_model'))
+    from test_character_model import fixture
+    character = scope / 'character.coral'
+    character.write_bytes(fixture())
+    env['CORAL_TEST_CHARACTER_MODEL'] = str(character)
+    # 用户词目前只用于完整词查询；组句夹具需把同音词放到独立的人工主词典。
+    neural = scope / 'neural'
+    shutil.copytree(runtime, neural)
+    lexicon = scope / 'lexicon.csv'
+    lexicon.write_text("index,pinyin,frequency,word,fullPinyin,backprob,in_m2\n\n\n"
+                       "0,zai,100000,在,zai,-10,1\n1,zai,90000,再,zai,-10,1\n", encoding='utf-8')
+    bigram = scope / 'bigram.csv'
+    bigram.write_text("prev_word,next_word,prob\n在,在,-0.1\n在,再,-0.2\n再,在,-0.1\n再,再,-0.2\n", encoding='utf-8')
+    subprocess.run([str(builder), '--csv', str(lexicon), str(bigram), str(neural / 'data/generallexicon')],
+                   env=env, check=True, timeout=10)
+    set_config(neural / 'config/coralpinyinConfig.ini', 'BigramGBin',
+               hashlib.md5((neural / 'data/generallexicon/languagemodel.coral').read_bytes()).hexdigest())
+    set_config(neural / 'config/coralpinyinConfig.ini', 'Version', 'neural-switch-v1')
+    env['CORAL_TEST_CHARACTER_RUNTIME'] = str(neural)
     return subprocess.run([str(executable), str(first), str(second), str(invalid), str(user)],
                           env=env, timeout=30).returncode
 

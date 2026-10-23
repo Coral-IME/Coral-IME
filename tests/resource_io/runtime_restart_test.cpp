@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "core_operations.h"
 #include "runtime_context.h"
+#include "preference_registry.h"
 #include "coral/composition/session_port.h"
 #include <filesystem>
 #include <iostream>
@@ -45,6 +46,63 @@ void check_candidates(SessionPort& port, const std::string& greeting, const std:
     require(result.output.candidates.candidates[0].word == country, "new OpenCC directory actually used");
     port.close_session(token);
 }
+#if CORAL_ENABLE_CHARACTER_MODEL
+void check_character_switch(const std::filesystem::path& runtime, const std::filesystem::path& user)
+{
+    const char* model_path = std::getenv("CORAL_TEST_CHARACTER_MODEL");
+    require(model_path && *model_path, "self-authored character fixture provided");
+    _putenv_s("CORAL_CHARACTER_MODEL", model_path);
+    _putenv_s("CORAL_CHARACTER_WEIGHT", "1");
+    std::filesystem::create_directories(user / "config");
+    std::filesystem::copy_file(runtime / "config/coralpinyinConfig.ini", user / "config/coralpinyinConfig.ini",
+        std::filesystem::copy_options::overwrite_existing);
+    const auto trace = user / "character-trace.tsv";
+    _putenv_s("CORAL_CHARACTER_TRACE", trace.string().c_str());
+    auto trace_size = [&] { return std::filesystem::exists(trace) ? std::filesystem::file_size(trace) : 0; };
+    auto query = [](SessionPort& port, const std::string& input) {
+        const auto session = port.open_session();
+        SessionSettings settings; settings.pinyin_correction = false;
+        require(static_cast<bool>(port.apply_settings(session, 1, settings)), "neural switch session settings");
+        auto result = port.query_page(session, 2, "", input, 0, 7, 0);
+        require(result && !result.output.candidates.empty(), "neural switch real query");
+        port.close_session(session);
+    };
+    auto first = open_runtime(runtime, user);
+    require(first && first->available() && sConfig->get_smart_candidates(), "smart candidates starts enabled");
+    // 人工主词典只含“在/再”两个同音单字，长输入必须走组合路径。
+    const std::string input = "zaizaizaizai";
+    query(*first, input);
+    const auto enabled_size = trace_size();
+    require(enabled_size > 0, "default startup actually scores with neural model");
+    sConfig->set_smart_candidates(false);
+    coral::runtime::refresh_runtime_settings();
+    query(*first, input + "zai");
+    require(trace_size() > enabled_size, "saving disable does not alter the running engine");
+    first.reset();
+
+    auto disabled = open_runtime(runtime, user);
+    require(disabled && disabled->available() && !sConfig->get_smart_candidates(), "restart reads saved disable");
+    const auto disabled_size = trace_size();
+    query(*disabled, input);
+    query(*disabled, input + "zai");
+    require(trace_size() == disabled_size, "disabled startup never scores even with explicit trace");
+    sConfig->set_smart_candidates(true);
+    coral::runtime::refresh_runtime_settings();
+    query(*disabled, input + "zaizai");
+    require(trace_size() == disabled_size, "saving enable does not alter the running engine");
+    disabled.reset();
+
+    auto enabled = open_runtime(runtime, user, false);
+    require(enabled && enabled->available() && sConfig->get_smart_candidates(), "async restart reads saved enable");
+    query(*enabled, input);
+    require(trace_size() > disabled_size, "restart restores neural scoring for the same input");
+    enabled.reset();
+    _putenv_s("CORAL_CHARACTER_MODEL", "");
+    _putenv_s("CORAL_CHARACTER_WEIGHT", "");
+    _putenv_s("CORAL_CHARACTER_TRACE", "");
+    std::cout << "Smart candidates persistence, restart-only gating and async loading passed\n";
+}
+#endif
 } // namespace
 
 int main(int argc, char** argv)
@@ -112,6 +170,11 @@ int main(int argc, char** argv)
         DWORD handles_after = 0;
         require(GetProcessHandleCount(GetCurrentProcess(), &handles_after) != FALSE, "read final handles");
         require(handles_after <= handles_before + 2, "repeated restart does not accumulate model handles");
+#if CORAL_ENABLE_CHARACTER_MODEL
+        const char* character_runtime = std::getenv("CORAL_TEST_CHARACTER_RUNTIME");
+        require(character_runtime && *character_runtime, "self-authored character runtime provided");
+        check_character_switch(std::filesystem::path(character_runtime), user / "character-switch");
+#endif
         old_borrower.reset();
         cold_borrower.reset();
         std::cout << "Runtime paths, model reconstruction, stale ports, failed retry and async restart passed\n";

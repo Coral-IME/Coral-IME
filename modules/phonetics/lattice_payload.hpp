@@ -33,6 +33,8 @@ struct CandidateEdgePayload
 	coral::phonetics::Score weight = kLogInfiniteSimal;
 	bool is_corrected{ false };
 	bool english_context_only = false;
+    // 真实词库查询命中，包括尚无主词典 ID 的用户自造词；默认音节回退不置位。
+    bool dictionary_match = false;
 	CandidateEdgePayload(const CandidateEdgePayload& other) = delete;
 	CandidateEdgePayload(CandidateEdgePayload && other) noexcept = default;
 	CandidateEdgePayload& operator=(const CandidateEdgePayload & other) = delete;

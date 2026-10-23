@@ -113,7 +113,8 @@ public:
 	const string& candidate_display_text(int index) const;
 	// 异步返回仅表示任务已接收；首次解析等待整批完成，失败不发布就绪状态。
 	// retryUntilSuccess 允许解析入口在失败后同步重试；显式 load 可重新发起加载。
-	bool load(const coral::phonetics::LexiconLocations &path, bool bSync, bool retryUntilSuccess = false);
+	bool load(const coral::phonetics::LexiconLocations &path, bool bSync, bool retryUntilSuccess = false,
+        bool smart_candidates = true);
 
 	// 拼音解析流程拆分
 	bool get_pinyin_sequence(PinyinParseContext& context);
@@ -236,6 +237,7 @@ private:
     int cached_special_mode_ = -1;
 	coral::phonetics::ContextScorer language_model_;
 	std::string cached_condition_;
+    bool smart_candidates_ = true;
 	vector<coral::phonetics::CandidateResult> sents_cache_;
 	// Solution 里 sentence/pinyin/pinyinview 三个容器的堆缓冲，每轮解析都重新分配、
 	// 又在下一轮清缓存时全部释放。池子挂在单例上（PinyinParseContext 连同它内部的

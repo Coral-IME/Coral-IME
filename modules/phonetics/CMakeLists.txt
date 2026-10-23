@@ -1,5 +1,10 @@
 ﻿# coral_engine_core：进程内静态词典核心
 
+set(CORAL_CHARACTER_RERANK_THRESHOLD "3" CACHE STRING "Skip neural reranking for candidates with at most N Unicode characters")
+if(NOT CORAL_CHARACTER_RERANK_THRESHOLD MATCHES "^(0|[1-9][0-9]?)$" OR CORAL_CHARACTER_RERANK_THRESHOLD GREATER 63)
+    message(FATAL_ERROR "CORAL_CHARACTER_RERANK_THRESHOLD must be an integer from 0 to 63")
+endif()
+
 set(CORAL_COMMON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../src/common)
 
 set(CORAL_PHONETICS_SOURCES
@@ -129,6 +134,9 @@ function(coral_configure_phonetics target_name)
             ${CMAKE_CURRENT_SOURCE_DIR}/../../src/platform/windows/ipc/include
     )
     target_compile_definitions(${target_name} PRIVATE OS_WINDOW Opencc_BUILT_AS_STATIC)
+    # 含有条件成员的头文件必须与所有调用方使用同一开关，避免类布局不一致。
+    target_compile_definitions(${target_name} PUBLIC CORAL_ENABLE_CHARACTER_MODEL=$<BOOL:${CORAL_ENABLE_CHARACTER_MODEL}>)
+    target_compile_definitions(${target_name} PUBLIC CORAL_CHARACTER_RERANK_THRESHOLD=${CORAL_CHARACTER_RERANK_THRESHOLD})
     if(FUNCTIMER_OPEN)
         target_compile_definitions(${target_name} PRIVATE FUNCTIMER_OPEN)
     endif()

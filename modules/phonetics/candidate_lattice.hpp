@@ -303,10 +303,12 @@ public:
 			arcs_.emplace_back(from_vertex_index, to_vertex_index);
 			arcs_.back().data.emplace(phraseIter->phrase, phraseIter->id, static_cast<int>(arcs_.size()), sharedSequence,
 				phraseIter->phrase_weight + penalty, phraseIter->is_corrected);
+            arcs_.back().data.dictionary_match = phraseIter->id != kExtendedMatchId;
 		}
 		return true;
 	}
 
+    [[nodiscard]] std::string_view input_pinyin() const { return max_pinyin_; }
 	[[nodiscard]] int get_vertex_count() const
 	{
 		return vertex_count_;

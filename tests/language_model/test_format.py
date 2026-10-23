@@ -13,6 +13,7 @@ from surface_model_format import encode_model, write_model
 
 PROBE, NATIVE = sys.argv[1:3]
 DECODER = sys.argv[3] if len(sys.argv) > 3 else None
+NEURAL = len(sys.argv) < 5 or sys.argv[4] == '1'
 sys.argv[1:] = []
 
 
@@ -55,6 +56,12 @@ class FormatTests(unittest.TestCase):
             if DECODER:
                 decoded = subprocess.run([DECODER, str(model), str(lexicon)], capture_output=True, text=True)
                 self.assertEqual(decoded.returncode, 0, decoded.stderr)
+                if NEURAL:
+                    from test_character_model import fixture
+                    character = root / 'character.coral'
+                    character.write_bytes(fixture())
+                    decoded = subprocess.run([DECODER, str(model), str(lexicon), str(character)], capture_output=True, text=True)
+                    self.assertEqual(decoded.returncode, 0, decoded.stderr)
             output = result.stdout.splitlines()
             self.assertAlmostEqual(float(output[0]), math.log(.2), places=12)
             self.assertAlmostEqual(float(output[1]), math.log(.6), places=12)

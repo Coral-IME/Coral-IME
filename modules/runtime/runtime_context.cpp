@@ -61,7 +61,8 @@ bool Engine::init(const EngineOptions& options)
 		versionId};
 
 	// 3. 兼容访问入口加载可释放的模型实例
-	if (!coral::phonetics::SyllableParser::instance().load(lexiconPath, options.syncLoad, options.retryModelLoadUntilSuccess))
+	if (!coral::phonetics::SyllableParser::instance().load(lexiconPath, options.syncLoad, options.retryModelLoadUntilSuccess,
+        sConfig->get_smart_candidates()))
 	{
 		LOG_ERROR("Engine: failed to load pinyin model data for version: " + versionId);
 		shutdown();

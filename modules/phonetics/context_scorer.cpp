@@ -1,10 +1,11 @@
-﻿/*
+/*
 * @author: xuxiang
 * @date 2021-6-10 11:50:33
 */
 #include "pch.h"
 #include "phonetic_types.h"
 #include "context_scorer.h"
+#include <cstdlib>
 
 namespace
 {
@@ -14,6 +15,36 @@ namespace
 
 coral::phonetics::ContextScorer::ContextScorer() = default;
 coral::phonetics::ContextScorer::~ContextScorer() = default;
+
+#if CORAL_ENABLE_CHARACTER_MODEL
+void coral::phonetics::ContextScorer::configure_character_model(const std::filesystem::path& default_path, bool enabled)
+{
+    character_model_ = coral::language_model::CharacterModel{};
+    character_weight_ = 0;
+    if (!enabled) return;
+#if defined(_WIN32)
+    const wchar_t* path = _wgetenv(L"CORAL_CHARACTER_MODEL");
+#else
+    const char* path = std::getenv("CORAL_CHARACTER_MODEL");
+#endif
+    const auto model_path = path && *path ? std::filesystem::path(path) : default_path;
+    std::error_code ec;
+    if (!std::filesystem::exists(model_path, ec)) return;
+    double weight = 0.5;
+    if (const char* value = std::getenv("CORAL_CHARACTER_WEIGHT")) {
+        char* end = nullptr;
+        weight = std::strtod(value, &end);
+        if (!end || end == value || *end || !std::isfinite(weight) || weight < 0 || weight > 8) {
+            LOG_ERROR("Character language model rejected: invalid weight"); return;
+        }
+    }
+    std::string error;
+    if (!load_character_model(model_path, weight, error))
+        LOG_ERROR("Character language model rejected: " + error);
+    else LOG_INFO("Character language model enabled, weight=" + std::to_string(weight));
+}
+
+#endif
 
 bool coral::phonetics::ContextScorer::load_surface_model(const filesystem::path& model,
     const filesystem::path& lexicon, std::string& error)

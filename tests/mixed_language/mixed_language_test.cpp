@@ -139,15 +139,14 @@ void check_condition_weight(coral::phonetics::LexiconCatalog& lexicon,
     const double full = score({write_token}, 0, 1.0f);
     const double reduced = score({write_token}, 0, 0.7f);
     expect(std::abs(ordinary - writing) < 1e-5, "no condition retains unigram score");
-    expect(std::abs(full + 0.01) < 1e-5, "100 percent retains original condition score");
+    expect(std::abs(full - writing) < 1e-5, "full dictionary hit bypasses condition model");
     expect(std::abs(score({write_token}, 0, 0.0f) - ordinary) < 1e-5,
         "zero percent equals no external condition");
-    expect(reduced > ordinary && reduced < full &&
-        std::abs(reduced - (0.3 * writing - 0.007)) < 1e-5,
-        "70 percent preserves only 70 percent of condition advantage");
+    expect(std::abs(reduced - ordinary) < 1e-5,
+        "full dictionary hit keeps its own weight at every condition strength");
     expect(std::abs(score({use_token, write_token}, 2, 0.7f) - (using_weight - 0.01)) < 1e-5,
         "internal bigram stays at full strength");
-    expect(std::abs(score({unknown, write_token}, 0, 0.7f) - (-4.0 + reduced)) < 1e-5,
+    expect(std::abs(score({unknown, write_token}, 0, 0.7f) - (-4.0 + 0.3 * writing - 0.007)) < 1e-5,
         "unknown prefix cannot bypass condition damping");
     expect(std::abs(score({unknown, write_token}, 0, 0.0f) - (-4.0 + ordinary)) < 1e-5,
         "zero percent clears condition across unknown prefix");
