@@ -16,6 +16,8 @@
 #include "addphrasedialog.h"
 #include "skincropdialog.h"
 #include "update_coordinator.h"
+#include "other_ime_import_coordinator.h"
+#include "default_input_settings.h"
 #include "utils/helper.h"
 #include "utf8conv.h"
 #include "layout_metadata.h"
@@ -39,6 +41,10 @@ using namespace coral::win32::soft;
 
 namespace
 {
+	std::unique_ptr<coral::settings_app::OtherImeImportCoordinator> g_other_ime_import;
+	std::wstring g_other_ime_path;
+    std::unique_ptr<coral::settings_app::DefaultInputSettings> g_default_input_settings;
+    constexpr UINT_PTR kDefaultInputTimer = 0x434449;
 	using coral::settings_ui::DpiCanvas;
 	using coral::settings_ui::DpiScale;
 	using coral::settings_ui::DpiContext;
@@ -129,7 +135,7 @@ namespace
 		// 主题 tab：纯色 / 渐变 / 图片
 		ID_A_TAB = 0x1350, ID_A_TAB_LAST = ID_A_TAB + 2,
 		// 词库页
-		ID_L_EXPORT = 0x1400, ID_L_IMPORT, ID_L_CLEAR,
+		ID_L_EXPORT = 0x1400, ID_L_IMPORT, ID_L_CLEAR, ID_L_IMPORT_OTHER,
 		ID_L_AUTOSYMBOL, ID_L_DIGITSYMBOL, ID_L_LETTERSYMBOL,
 		// 常用语和剪贴板页
 		ID_P_TAB = 0x1600, ID_P_TAB_LAST = ID_P_TAB + 1,
@@ -371,6 +377,7 @@ namespace
 	constexpr UINT kRebuildPhrase = WM_APP + 2;
 	// 列表行右键：wParam = MAKEWPARAM(列表 ID, 行号)，lParam = 屏幕坐标。
 	constexpr UINT kListContext = WM_APP + 3;
+	constexpr UINT kImportOtherReady = WM_APP + 4;
 	constexpr int kTileColumns = 4;
 	constexpr int kTileHeight = 44;
 	constexpr int kTileChip = 22;
@@ -2371,6 +2378,10 @@ LRESULT CALLBACK SettingsWindow::wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
 		switchPage(0);
 		return 0;
 	case WM_DESTROY:
+        KillTimer(hwnd, kDefaultInputTimer);
+        g_default_input_settings.reset();
+		g_other_ime_import.reset();
+		g_other_ime_path.clear();
 		destroyPages();
 		destroyFonts();
 		s_hwnd = nullptr;
@@ -2380,6 +2391,36 @@ LRESULT CALLBACK SettingsWindow::wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
 	case WM_CLOSE:
 		DestroyWindow(hwnd);
 		return 0;
+    case WM_TIMER:
+        if (wParam == kDefaultInputTimer && g_default_input_settings) {
+            const auto result = g_default_input_settings->state();
+            if (result != coral::settings_app::DefaultInputSettings::State::running) {
+                KillTimer(hwnd, kDefaultInputTimer);
+                if (result == coral::settings_app::DefaultInputSettings::State::failed)
+                    MessageBoxW(hwnd,
+                        L"未能自动进入高级键盘设置。请在已打开的“输入”页点击“高级键盘设置”，再选择“替代默认输入法”。",
+                        L"设置默认输入法", MB_OK | MB_ICONINFORMATION);
+            }
+            return 0;
+        }
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+	case WM_COPYDATA:
+		if (g_other_ime_import && g_other_ime_import->accept_message(reinterpret_cast<HWND>(wParam),
+			reinterpret_cast<const COPYDATASTRUCT*>(lParam), g_other_ime_path)) {
+			return PostMessageW(hwnd, kImportOtherReady, 0, 0) ? TRUE : FALSE;
+		}
+		return FALSE;
+	case kImportOtherReady: {
+		const std::wstring path = std::move(g_other_ime_path);
+		g_other_ime_path.clear();
+		if (!path.empty()) {
+			switchPage(static_cast<int>(SettingsEnum::SettingType::lexicon));
+			ShowWindow(hwnd, SW_RESTORE);
+			SetForegroundWindow(hwnd);
+			LexiconImportDialog::show_file(hwnd, path);
+		}
+		return 0;
+	}
 	case WM_SIZE:
 		layoutPages();
 		FuzzyPinyinDialog::resizeToParent();
@@ -2791,7 +2832,7 @@ void SettingsWindow::createRoutinePage()
 	b.row(L"字母后输入英文符号");
 	b.toggle(ID_L_LETTERSYMBOL);
     b.section(L"系统默认输入法");
-    b.row(L"默认输入法", L"打开 Windows 设置，由你选择系统默认输入法");
+    b.row(L"默认输入法", L"打开“高级键盘设置”，在“替代默认输入法”中选择");
     b.button(ID_R_DEFAULT_INPUT, L"设置默认输入法");
 	b.finish();
 }
@@ -2922,6 +2963,8 @@ void SettingsWindow::createLexiconPage()
 	b.row(L"导入或导出", L"备份或迁移你的用户词库");
 	b.button(ID_L_IMPORT, L"导入词库");
 	b.button(ID_L_EXPORT, L"导出词库");
+	b.row(L"从其他输入法迁移", L"支持微软、搜狗和微信；导出后可返回此处预览并导入");
+	b.button(ID_L_IMPORT_OTHER, L"从其他输入法导入");
 	b.row(L"清除用户词库", L"此操作不可恢复，不影响系统词库");
 	b.button(ID_L_CLEAR, L"清除全部用户词库", ButtonTone::Danger);
 
@@ -3665,11 +3708,16 @@ void SettingsWindow::onCommand(WPARAM wParam, LPARAM lParam)
 	case ID_R_CORRECT: sConfig->setPinyinCorrection(checked); break;
 	case ID_R_FUZZY: FuzzyPinyinDialog::showInstance(s_hwnd); break;
     case ID_R_DEFAULT_INPUT:
-        if (code == BN_CLICKED && reinterpret_cast<INT_PTR>(ShellExecuteW(s_hwnd, L"open",
-            L"ms-settings:keyboard-advanced", nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
-            MessageBoxW(s_hwnd,
-                L"无法打开 Windows 设置。请在系统设置中搜索“高级键盘设置”，在“替代默认输入法”中自行选择输入法。",
-                L"设置默认输入法", MB_OK | MB_ICONINFORMATION);
+        if (code == BN_CLICKED) {
+            if (!g_default_input_settings)
+                g_default_input_settings = std::make_unique<coral::settings_app::DefaultInputSettings>();
+            if (g_default_input_settings->start(s_hwnd))
+                SetTimer(s_hwnd, kDefaultInputTimer, 100, nullptr);
+            else
+                MessageBoxW(s_hwnd,
+                    L"无法打开高级键盘设置。请进入“时间和语言”→“输入”→“高级键盘设置”，在“替代默认输入法”中选择输入法。",
+                    L"设置默认输入法", MB_OK | MB_ICONINFORMATION);
+        }
         break;
 
 	// ---- 按键页 ----
@@ -3755,6 +3803,7 @@ void SettingsWindow::onCommand(WPARAM wParam, LPARAM lParam)
 	// ---- 词库页 ----
 	case ID_L_EXPORT: exportLexicon(); break;
 	case ID_L_IMPORT: importLexicon(); break;
+	case ID_L_IMPORT_OTHER: import_other_ime(); break;
 	case ID_L_CLEAR: clear_lexicon(); break;
 	case ID_L_AUTOSYMBOL: sConfig->setIsAutoSymbolCompletion(checked); break;
 	case ID_L_DIGITSYMBOL: sConfig->setIsAutoConvertDigitSymbol(checked); break;
@@ -3875,6 +3924,15 @@ void SettingsWindow::exportLexicon()
 void SettingsWindow::importLexicon()
 {
 	LexiconImportDialog::showInstance(s_hwnd);
+}
+
+void SettingsWindow::import_other_ime()
+{
+	if (!g_other_ime_import)
+		g_other_ime_import = std::make_unique<coral::settings_app::OtherImeImportCoordinator>();
+	std::wstring error;
+	if (!g_other_ime_import->start(s_hwnd, hlp::getLocalLowCoralPinyinPath() / L"lexicon-migration", error))
+		MessageBoxW(s_hwnd, error.c_str(), L"从其他输入法导入", MB_OK | MB_ICONINFORMATION);
 }
 
 void SettingsWindow::clear_lexicon()

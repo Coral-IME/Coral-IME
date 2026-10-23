@@ -11,7 +11,7 @@
 namespace coral::lexicon_io
 {
 enum class ImportEncoding { kUtf8, kUtf16Le, kUtf16Be, kGb18030 };
-enum class ImportLayout { kWords, kWordsAndPinyin, kCoralCsv };
+enum class ImportLayout { kWords, kWordsAndPinyin, kCoralCsv, kMigrationTsv };
 
 struct ImportedText
 {
@@ -22,6 +22,7 @@ struct ImportedText
     wchar_t delimiter = 0;             // 0：整行即词语
     std::vector<UserLexiconImportItem> items;
     std::vector<std::wstring> lines;   // 与 items 一一对应的原始行，供预览展示
+    std::wstring parse_error;          // 命名列文本校验失败时不提交部分词条
 };
 
 // charset：纯文本词库写入的字符集；自有 CSV 保留 Charset 字段。失败时 error 可直接展示。

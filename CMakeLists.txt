@@ -141,6 +141,7 @@ if(WIN32)
     add_subdirectory(tests/settings_ui)
     add_subdirectory(tests/fuzzy_dialog)
     add_subdirectory(tests/lexicon_import_dialog)
+    add_subdirectory(tests/ime_migration)
 endif()
 
 # CSW4 session wire contract and Windows pipe failure behavior.

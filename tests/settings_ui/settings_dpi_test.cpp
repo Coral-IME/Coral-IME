@@ -12,14 +12,22 @@ int WINAPI settings_test_message_box(HWND, LPCWSTR text, LPCWSTR, UINT) {
 // 捕获系统设置启动请求，测试不打开系统窗口或更改默认输入法。
 std::vector<std::wstring> settings_launches;
 INT_PTR settings_launch_result = 33;
-HINSTANCE WINAPI settings_test_shell_execute(HWND, LPCWSTR, LPCWSTR file, LPCWSTR, LPCWSTR, INT) {
-    settings_launches.emplace_back(file);
-    return reinterpret_cast<HINSTANCE>(settings_launch_result);
+#include "default_input_settings.h"
+// 隐藏窗口回归使用导航替身，绝不操作用户的系统设置窗口。
+coral::settings_app::DefaultInputSettings::State settings_navigation_next_state =
+    coral::settings_app::DefaultInputSettings::State::succeeded;
+namespace coral::settings_app {
+DefaultInputSettings::~DefaultInputSettings() = default;
+void DefaultInputSettings::stop() {}
+bool DefaultInputSettings::start(HWND) {
+    if (state() == State::running) return true;
+    settings_launches.emplace_back(L"advanced-keyboard-settings");
+    state_ = settings_launch_result > 32 ? settings_navigation_next_state : State::failed;
+    return settings_launch_result > 32;
+}
 }
 #define MessageBoxW settings_test_message_box
-#define ShellExecuteW settings_test_shell_execute
 #include "../../src/platform/windows/coralpinyin/src/ui/settingswindow.cpp"
-#undef ShellExecuteW
 #undef MessageBoxW
 #include <iostream>
 #include <stdexcept>
@@ -72,6 +80,14 @@ void check_scale(HWND window, UINT dpi, const std::filesystem::path& output)
     LOGFONTW font{};
     GetObjectW(g_fonts[F_LABEL], sizeof(font), &font);
     require(font.lfHeight == -scale.pixels(14), "Font is not rendered at device resolution");
+    SettingsWindow::switchPage(static_cast<int>(SettingsEnum::SettingType::lexicon));
+    const HWND lexicon = SettingsWindow::s_pages[static_cast<int>(SettingsEnum::SettingType::lexicon)];
+    const HWND migration = GetDlgItem(lexicon, ID_L_IMPORT_OTHER);
+    require(migration != nullptr, "Other IME import button missing");
+    wchar_t migration_label[64]{};
+    GetWindowTextW(migration, migration_label, 64);
+    require(std::wstring(migration_label) == L"从其他输入法导入", "Other IME import label wrong");
+    save_page(window, output / ("lexicon-" + std::to_string(dpi) + ".png"));
     const int speech_index = static_cast<int>(SettingsEnum::SettingType::speech);
     if (!coral::speech::win32::kSpeechFeatureEnabled) {
         const RECT hidden_nav = SettingsWindow::navRect(speech_index);
@@ -124,8 +140,8 @@ void check_scale(HWND window, UINT dpi, const std::filesystem::path& output)
     const auto messages_before = shortcut_messages.size();
     SendMessageW(default_input, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(scale.pixels(20), scale.pixels(12)));
     SendMessageW(default_input, WM_LBUTTONUP, 0, MAKELPARAM(scale.pixels(20), scale.pixels(12)));
-    require(settings_launches.size() == launches_before + 1 && settings_launches.back() == L"ms-settings:keyboard-advanced",
-        "Default input method entry did not open advanced keyboard settings once");
+    require(settings_launches.size() == launches_before + 1 && settings_launches.back() == L"advanced-keyboard-settings",
+        "Default input method entry did not request advanced keyboard navigation once");
     require(shortcut_messages.size() == messages_before, "Successful settings launch displayed an error");
     save_page(window, output / ("routine-default-input-" + std::to_string(dpi) + ".png"));
     SettingsWindow::scrollPage(0, 0);
@@ -495,6 +511,30 @@ int main(int argc, char** argv)
                     "Failed settings launch did not explain the manual path");
             }
             settings_launch_result = 33;
+            using NavigationState = coral::settings_app::DefaultInputSettings::State;
+            const auto navigate = [&] {
+                SendMessageW(SettingsWindow::s_pages[0], WM_COMMAND, MAKEWPARAM(ID_R_DEFAULT_INPUT, BN_CLICKED),
+                    reinterpret_cast<LPARAM>(default_input));
+            };
+            settings_navigation_next_state = NavigationState::failed;
+            const auto async_messages = shortcut_messages.size();
+            navigate();
+            SendMessageW(window, WM_TIMER, kDefaultInputTimer, 0);
+            require(shortcut_messages.size() == async_messages + 1 &&
+                shortcut_messages.back().find(L"未能自动进入") != std::wstring::npos,
+                "Navigation timeout did not explain the manual fallback");
+            settings_navigation_next_state = NavigationState::cancelled;
+            navigate();
+            const auto cancelled_messages = shortcut_messages.size();
+            SendMessageW(window, WM_TIMER, kDefaultInputTimer, 0);
+            require(shortcut_messages.size() == cancelled_messages, "Cancelled navigation displayed an error");
+            settings_navigation_next_state = NavigationState::running;
+            const auto pending_launches = settings_launches.size();
+            navigate();
+            navigate();
+            require(settings_launches.size() == pending_launches + 1, "Repeated clicks restarted pending navigation");
+            g_default_input_settings.reset();
+            settings_navigation_next_state = NavigationState::succeeded;
             SettingsWindow::switchPage(2);
             SettingsWindow::scrollPage(2, kWheelStep);
             RECT suggested{ 0, 0, 1500, 1050 };

@@ -1,4 +1,5 @@
 // 用户词库导入：真实主词典上的自动注音、拼音规范化、查重、写入与撤销。
+#include "coral/lexicon_io/text_import.h"
 // 用法：lexicon_import_engine_test <runtimeDataDir>
 // 用户词库写入 dataDir/../lexicon-import-scratch，不触碰真实用户数据。
 #include <algorithm>
@@ -130,6 +131,26 @@ int main(int argc, char** argv) {
     Check(afterRevert[2].status == UserLexiconImportStatus::Ready, "reverted entries importable again");
 
     std::cout << "bulk\n";
+    {
+        coral::lexicon_io::ImportedText migration;
+        coral::lexicon_io::parse_import_text(
+            L"word\tpinyin\tsource_weight_raw_max\tsource_records\n珊瑚词库迁移\tshan hu ci ku qian yi\t999999\t3\n",
+            coral::LanguageVariant::Simplified, migration);
+        Check(migration.items.size() == 1, "migration TSV header excluded");
+        Check(coral::runtime::prepare_user_import(migration.items, {}), "prepare migrated TSV");
+        Check(migration.items[0].status == UserLexiconImportStatus::Ready &&
+            migration.items[0].pinyin == "shan'hu'ci'ku'qian'yi", "migrated pinyin normalized by engine");
+        const auto migrated = coral::runtime::commit_user_import(migration.items);
+        Check(migrated.imported == 1 && HasCandidate("shanhucikuqianyi", "珊瑚词库迁移"),
+            "migrated TSV reaches searchable user dictionary");
+        coral::runtime::prepare_user_import(migration.items, {});
+        Check(migration.items[0].status == UserLexiconImportStatus::Exists, "migrated entry duplicate detection");
+        Check(coral::runtime::revert_user_import(), "migrated TSV import can be reverted");
+        // 主词典可能临时组出相同长句；撤销以用户条目已删除、可重新导入为准。
+        coral::runtime::prepare_user_import(migration.items, {});
+        Check(migration.items[0].status == UserLexiconImportStatus::Ready,
+            "reverted migration is absent from the user dictionary and importable again");
+    }
     {
         // 常用字两两/三三组合：大部分不是词典词，走分段注音最慢的路径
         const std::string common = "的一是在不了有和人这中大为上个国我以要他时来用们生到作地于出就分对成会可主发年动同工也能下过子说产种面而方后多定行学法所民得经十三之进着等部度家电力里如水化高自二理起小物现实加量都两体制机当使点从业本去把性好应开它合还因由其些然前外天政四日那社义事平形相全表间样与关各重新线内数正心反你明看原又么利比或但质气第向道命此变条只没结解问意建月公无系军很情者最立代想已通并提直题党程展五果料象员革位入常文总次品式活设及管特件长求老头基资边流路级少图山统接知较将组见计别她手角期根论运农指几九区强放决西被干做必战先回则任取据处理府研";

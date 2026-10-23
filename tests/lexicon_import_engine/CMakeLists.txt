@@ -10,5 +10,6 @@ target_include_directories(lexicon_import_engine_test PRIVATE
 )
 
 target_link_libraries(lexicon_import_engine_test PRIVATE coral_engine_core)
+target_link_libraries(lexicon_import_engine_test PRIVATE coral::lexicon_io)
 
 coral_target_common(lexicon_import_engine_test)

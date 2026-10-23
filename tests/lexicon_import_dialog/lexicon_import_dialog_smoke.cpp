@@ -90,6 +90,34 @@ int main(int argc, char** argv) {
         fs::create_directories(output);
         const auto data = output / "data";
         fs::create_directories(data);
+        // 迁移表使用命名列；表头、频次、来源位置不应成为词条。
+        coral::lexicon_io::ImportedText named;
+        coral::lexicon_io::parse_import_text(
+            L"word\tpinyin\tsource_weight_raw_max\tsource_records\r\n重庆\tchong qing\t65535\t2\r\n",
+            coral::LanguageVariant::Simplified, named);
+        Require(named.items.size() == 1 && named.items[0].phrase == "重庆" &&
+            named.items[0].rawPinyin == "chong qing" && named.items[0].rawLookupKey.empty() &&
+            named.items[0].line == 2 && named.format == coral::lexicon_io::ImportLayout::kMigrationTsv,
+            "Migration header/columns were not respected");
+        coral::lexicon_io::parse_import_text(L"pinyin\tword\tsequence\nni hao\t你好\t999\n",
+            coral::LanguageVariant::Simplified, named);
+        Require(named.items.size() == 1 && named.items[0].phrase == "你好" && named.items[0].rawPinyin == "ni hao",
+            "Reordered migration columns failed");
+        coral::lexicon_io::parse_import_text(L"word\tpinyin\n你好\t\n",
+            coral::LanguageVariant::Simplified, named);
+        Require(named.items.size() == 1 && named.items[0].rawPinyin.empty(), "Empty reading column was lost");
+        coral::lexicon_io::parse_import_text(L"word\tpinyin\n\"你\"\"好\"\tni hao\n",
+            coral::LanguageVariant::Simplified, named);
+        Require(named.items.size() == 1 && named.items[0].phrase == "你\"好", "TSV escaped quote was not decoded");
+        coral::lexicon_io::parse_import_text(L"previous_word\tprevious_pinyin\tnext_word\n你好\tni hao\t世界\n",
+            coral::LanguageVariant::Simplified, named);
+        Require(named.items.empty() && !named.parse_error.empty(), "Context pairs were accepted as words");
+        coral::lexicon_io::parse_import_text(L"word\tpinyin\n你好\tni hao\n错误\n",
+            coral::LanguageVariant::Simplified, named);
+        Require(named.items.empty() && !named.parse_error.empty(), "Malformed TSV left partially accepted items");
+        const auto migration = data / L"coral_import.tsv";
+        WriteBytes(migration, std::string("\xEF\xBB\xBF", 3) + Encode(
+            L"word\tpinyin\n重庆\tchong qing\n你好\tni hao\n重庆\tchong qing\n", CP_UTF8));
         const auto plain = data / L"搜狗导出.txt";
         WriteBytes(plain, Encode(L"重庆\n北京\n你好\n银行\n\n# 注释行\n重庆\n龘龘\n上海\n长城\n", CP_UTF8));
         const auto gbk = data / L"词语拼音.txt";
@@ -220,6 +248,21 @@ int main(int argc, char** argv) {
         Require(d->stage == Stage::Done, "Back did not return to done page");
         ClickTarget(child, *d, kFinish);
         Require(!IsWindow(child), "Finish did not close dialog");
+
+        // 工具交回路径后直接进入生产预览，再经同一提交与撤销流程。
+        testEngine.committed.clear();
+        testEngine.reverted = false;
+        LexiconImportDialog::show_file(parent, migration.wstring());
+        child = FindWindowExW(parent, nullptr, L"CoralPinyinLexiconImportDlg", nullptr);
+        d = reinterpret_cast<Dialog*>(GetWindowLongPtrW(child, GWLP_USERDATA));
+        Require(d && d->stage == Stage::Preview && d->file.items.size() == 3 &&
+            d->ready == 2 && d->repeated == 1, "Migration did not enter preview with duplicate checks");
+        ClickTarget(child, *d, kImport);
+        Require(d->stage == Stage::Done && d->report.imported == 2 && d->report.skipped == 1,
+            "Migration TSV did not commit through normal import");
+        ClickTarget(child, *d, kUndo);
+        Require(d->reverted && testEngine.reverted, "Migration import could not be reverted");
+        ClickTarget(child, *d, kFinish);
 
         // ---- 词语 + 拼音（GBK），写入阶段失败 ----
         std::tie(child, d) = open();

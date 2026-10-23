@@ -45,6 +45,8 @@ inline bool prepare_user_import(std::vector<UserLexiconImportItem>& items, const
         const auto chars = SplitChars(item.phrase);
         if (!item.rawPinyin.empty()) {
             item.pinyin = item.rawPinyin;
+            // 迁移工具使用空格分音节；替身与生产规范化保持这部分行为一致。
+            std::replace(item.pinyin.begin(), item.pinyin.end(), ' ', '\'');
             item.source = UserLexiconPinyinSource::File;
             if (std::count(item.pinyin.begin(), item.pinyin.end(), '\'') + 1 != static_cast<long long>(chars.size())) {
                 item.status = UserLexiconImportStatus::Invalid;

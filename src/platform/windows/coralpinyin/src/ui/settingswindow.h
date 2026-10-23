@@ -152,6 +152,7 @@ private:
 	static void importCandidateImage(const std::wstring& source);
 	static void exportLexicon();
 	static void importLexicon();
+	static void import_other_ime();
 	static void clear_lexicon();
 	static std::wstring getVersionString();
 	static std::vector<std::pair<std::string, std::wstring>> enumDoublepinyinSchemes(); // {schemeName, 显示名}

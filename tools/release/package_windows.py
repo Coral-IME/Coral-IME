@@ -30,6 +30,11 @@ def stage_legal_documents(package):
         notice+=(CODE_ROOT/'docs/legal'/name).read_text(encoding='utf-8-sig')+'\n\n'
     (legal_dir/'安装前须知.txt').write_bytes(notice.replace('\r\n','\n').replace('\n','\r\n').encode('utf-16'))
 
+def stage_migration_tool(package):
+    # 工具只携带公开脚本，运行时由用户选择本机词库。
+    tools=Path(package)/'tools';tools.mkdir()
+    shutil.copyfile(CODE_ROOT/'tools/data/ime_dictionary_tool.py',tools/'ime_dictionary_tool.py')
+
 def machine(path):
     with Path(path).open('rb') as stream:
         if stream.read(2)!=b'MZ':raise ValueError('Not a PE binary: '+str(path))
@@ -69,6 +74,7 @@ def main():
         root=output_path(args.output_dir,[args.build_dir,runtime,args.x86_tsf],directory=True)
         package=root/'package/x64';package.mkdir(parents=True)
         for name in OWNED:shutil.copyfile(binaries/name,package/name)
+        stage_migration_tool(package)
         shutil.copyfile(args.x86_tsf,package/IDENTITY['tsf_x86_dll'])
         res=package/'res';res.mkdir()
         for name in ('pinyin.ico','zh.ico','en.ico','A.ico'):

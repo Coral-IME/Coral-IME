@@ -302,6 +302,8 @@ Section "MainSection" SEC01
   File "${PACKAGE_DIR}\LICENSING.md"
   File "${PACKAGE_DIR}\THIRD_PARTY_NOTICES.md"
   File "${PACKAGE_DIR}\THIRD_PARTY_MANIFEST.json"
+  SetOutPath "${NOW_INST_DIR}\tools"
+  File "${PACKAGE_DIR}\tools\ime_dictionary_tool.py"
   SetOutPath "${NOW_INST_DIR}\legal"
   File "${PACKAGE_DIR}\legal\*.*"
   SetOutPath "${NOW_INST_DIR}\licenses"

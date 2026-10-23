@@ -9,6 +9,8 @@ class LexiconImportDialog
 {
 public:
 	static void showInstance(HWND parent);
+	// 外部迁移工具交回的 TSV 仍经过同一预览、校验和用户确认。
+	static void show_file(HWND parent, const std::wstring& path);
 	static void closeInstance();
 	static void resizeToParent();
 

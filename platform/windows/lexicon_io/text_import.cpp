@@ -195,6 +195,80 @@ namespace
     {
         return line[0] == L'#' || line[0] == L';' || line.compare(0, 2, L"//") == 0;
     }
+
+    // 迁移表按列名读取，不把序列号、原始词频或前后文索引猜成词语与拼音。
+    bool split_named_fields(const std::wstring& line, std::vector<std::wstring>& fields)
+    {
+        fields.clear();
+        std::wstring field;
+        bool quoted = false, closed = false;
+        for (size_t i = 0; i < line.size(); ++i)
+        {
+            const wchar_t c = line[i];
+            if (quoted)
+            {
+                if (c != L'"') field += c;
+                else if (i + 1 < line.size() && line[i + 1] == L'"') { field += L'"'; ++i; }
+                else { quoted = false; closed = true; }
+            }
+            else if (c == L'\t') { fields.push_back(field); field.clear(); closed = false; }
+            else if (c == L'"' && field.empty() && !closed) quoted = true;
+            else if (closed || c == L'"') return false;
+            else field += c;
+        }
+        if (quoted) return false;
+        fields.push_back(field);
+        return true;
+    }
+
+    bool parse_named_tsv(const std::vector<std::wstring>& lines, size_t first,
+        coral::LanguageVariant charset, ImportedText& out)
+    {
+        std::vector<std::wstring> header;
+        if (!split_named_fields(lines[first], header)) return false;
+        for (auto& field : header) field = lower_ascii(trim_field(field));
+        const auto word = std::find(header.begin(), header.end(), L"word");
+        if (word == header.end())
+        {
+            if (std::find(header.begin(), header.end(), L"previous_word") == header.end() &&
+                std::find(header.begin(), header.end(), L"next_word") == header.end()) return false;
+            out.parse_error = L"这是上下文搭配表，不能作为普通词库导入。请选择 *_migration.tsv 词表。";
+            return true;
+        }
+        const auto pinyin = std::find(header.begin(), header.end(), L"pinyin");
+        const size_t word_index = static_cast<size_t>(word - header.begin());
+        const size_t pinyin_index = static_cast<size_t>(pinyin - header.begin());
+        if (std::count(header.begin(), header.end(), L"word") != 1 ||
+            std::count(header.begin(), header.end(), L"pinyin") > 1)
+        {
+            out.parse_error = L"迁移表包含重复的词语或拼音列名，请检查表头。";
+            return true;
+        }
+        out.format = ImportLayout::kMigrationTsv;
+        out.delimiter = L'\t';
+        std::vector<UserLexiconImportItem> items;
+        std::vector<std::wstring> original;
+        for (size_t i = first + 1; i < lines.size(); ++i)
+        {
+            if (trim_field(lines[i]).empty()) continue;
+            std::vector<std::wstring> fields;
+            if (!split_named_fields(lines[i], fields) || fields.size() != header.size())
+            {
+                out.parse_error = L"迁移表第 " + std::to_wstring(i + 1) + L" 行的列数或引号不正确，请重新导出。";
+                return true;
+            }
+            UserLexiconImportItem item;
+            item.line = static_cast<int>(i + 1);
+            item.phrase = encode_utf8(trim_field(fields[word_index]));
+            if (pinyin != header.end()) item.rawPinyin = encode_utf8(trim_field(fields[pinyin_index]));
+            item.charset = charset;
+            items.push_back(std::move(item));
+            original.push_back(lines[i]);
+        }
+        out.items = std::move(items);
+        out.lines = std::move(original);
+        return true;
+    }
 }
 
 void parse_import_text(const std::wstring& text, coral::LanguageVariant charset, ImportedText& out)
@@ -203,14 +277,19 @@ void parse_import_text(const std::wstring& text, coral::LanguageVariant charset,
     out.lines.clear();
     out.delimiter = 0;
     out.format = ImportLayout::kWords;
+    out.parse_error.clear();
 
     // 保留行号：空行、注释行用空串占位
     std::vector<std::wstring> lines;
+    std::vector<std::wstring> named_lines;
     size_t start = 0;
     while (start <= text.size())
     {
         size_t end = text.find(L'\n', start);
         if (end == std::wstring::npos) end = text.size();
+        auto raw = text.substr(start, end - start);
+        if (!raw.empty() && raw.back() == L'\r') raw.pop_back();
+        named_lines.push_back(std::move(raw));
         std::wstring line = trim_field(text.substr(start, end - start));
         if (!line.empty() && is_comment(line)) line.clear();
         lines.push_back(std::move(line));
@@ -232,6 +311,8 @@ void parse_import_text(const std::wstring& text, coral::LanguageVariant charset,
     while (first < lines.size() && lines[first].empty()) ++first;
     if (first >= lines.size())
         return;
+
+    if (parse_named_tsv(named_lines, first, charset, out)) return;
 
     if (lower_ascii(lines[first]).compare(0, std::size(kExportHeader) - 1, kExportHeader) == 0)
     {
@@ -339,6 +420,11 @@ bool read_import_file(const std::wstring& path, coral::LanguageVariant charset, 
         return false;
     }
     parse_import_text(text, charset, out);
+    if (!out.parse_error.empty())
+    {
+        error = out.parse_error;
+        return false;
+    }
     if (out.items.empty())
     {
         error = L"文件中没有可识别的词条";
@@ -364,6 +450,7 @@ std::wstring layout_label(ImportLayout format)
     {
     case ImportLayout::kWordsAndPinyin: return L"词语 + 拼音";
     case ImportLayout::kCoralCsv: return L"本输入法导出的 CSV";
+    case ImportLayout::kMigrationTsv: return L"其他输入法迁移词表";
     default: return L"纯词语";
     }
 }

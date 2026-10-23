@@ -811,6 +811,14 @@ void LexiconImportDialog::showInstance(HWND parent) {
 void LexiconImportDialog::closeInstance() {
     if (IsWindow(s_hwnd)) DestroyWindow(s_hwnd);
 }
+void LexiconImportDialog::show_file(HWND parent, const std::wstring& path) {
+    showInstance(parent);
+    if (!IsWindow(s_hwnd)) return;
+    auto* state = reinterpret_cast<Dialog*>(GetWindowLongPtrW(s_hwnd, GWLP_USERDATA));
+    if (!state) return;
+    EndEdit(s_hwnd, *state, false);
+    LoadFile(s_hwnd, *state, path);
+}
 void LexiconImportDialog::resizeToParent() {
     if (!IsWindow(s_hwnd)) return;
     const HWND parent = GetParent(s_hwnd);

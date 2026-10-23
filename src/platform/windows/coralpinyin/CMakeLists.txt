@@ -21,6 +21,8 @@ add_executable(coralpinyin
     ${CMAKE_SOURCE_DIR}/apps/settings_app/update_coordinator.cpp
     src/ui/updatewindow.cpp
     ${CMAKE_SOURCE_DIR}/apps/settings_app/online_lexicon_coordinator.cpp
+    ${CMAKE_SOURCE_DIR}/apps/settings_app/other_ime_import_coordinator.cpp
+    ${CMAKE_SOURCE_DIR}/apps/settings_app/default_input_settings.cpp
 
     ../common/skingui/wndeffect.cpp
     ../../../../modules/foundation/product_constants.cpp
@@ -82,7 +84,7 @@ target_link_libraries(coralpinyin PRIVATE
     coral::windows_speech
     coral_engine_core
     opencc marisa-trie
-    NetApi32 version
+    NetApi32 version UIAutomationCore
 )
 
 target_link_libraries(coralpinyin PRIVATE coralipc coral_trace coral_preferences)
@@ -93,6 +95,14 @@ target_precompile_headers(coralpinyin PRIVATE pch.h)
 
 coral_target_common(coralpinyin)
 coral_product_output(coralpinyin CORAL_ID_SETTINGS_EXE)
+
+# 独立迁移脚本随开发输出与安装包一起提供，不复制任何用户词库。
+add_custom_target(coral_stage_ime_migration ALL
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:coralpinyin>/tools"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/tools/data/ime_dictionary_tool.py"
+        "$<TARGET_FILE_DIR:coralpinyin>/tools/ime_dictionary_tool.py")
+add_dependencies(coralpinyin coral_stage_ime_migration)
 
 
 # GUI/Win 程序：使用 Windows 子系统，避免运行/打包时弹出控制台黑窗
