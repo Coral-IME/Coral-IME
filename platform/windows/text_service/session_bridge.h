@@ -23,6 +23,7 @@ struct CandidateSnapshot {
     std::uint64_t request_id = 0;
     int offset = 0;
     bool has_more = false;
+    bool refinement_pending = false;
     std::vector<std::string> words;
     std::vector<std::string> pinyins;
     std::vector<std::string> display_texts;
@@ -32,6 +33,8 @@ class CandidateProvider {
 public:
     virtual ~CandidateProvider() = default;
     virtual HRESULT query(const CandidateLookup& lookup, CandidateSnapshot& snapshot) = 0;
+    virtual HRESULT refine(const CandidateLookup&, CandidateSnapshot&) { return S_FALSE; }
+    virtual void cancel_refinement(const CandidateLookup&) {}
     virtual HRESULT remember_candidate(composition::SessionToken session_id, const std::string& pinyin,
         const std::string& word, std::uint32_t& condition_id) = 0;
     virtual bool apply_candidate_rule(composition::SessionToken session_id, const std::string& pinyin,
@@ -49,6 +52,8 @@ public:
     composition::SessionToken create_session();
     void destroy_session(composition::SessionToken session_id);
     HRESULT query(const CandidateLookup& lookup, CandidateSnapshot& snapshot) override;
+    HRESULT refine(const CandidateLookup& lookup, CandidateSnapshot& snapshot) override;
+    void cancel_refinement(const CandidateLookup& lookup) override;
     HRESULT reset(composition::SessionToken session_id);
     HRESULT remember_candidate(composition::SessionToken session_id, const std::string& pinyin,
         const std::string& word, std::uint32_t& condition_id) override;
@@ -64,6 +69,7 @@ private:
         composition::SessionToken remote_id = 0;
         bool settings_synced = false;
         std::optional<composition::SessionSettings> settings;
+        std::uint64_t refinement_version = 0, refinement_query_id = 0;
     };
     enum class ReplayPolicy { kRead, kMutation };
     using Operation = std::function<composition::SessionResult(composition::SessionPort&,

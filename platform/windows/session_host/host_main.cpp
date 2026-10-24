@@ -296,6 +296,10 @@ private:
         case SessionOperation::kCloseSession: erase_locked(request.session_id); return response;
         case SessionOperation::kSendKey: response.engine = port_.send_key(local_id, request.request_id, request.key_event, request.input_context); break;
         case SessionOperation::kParseFull: response.engine = port_.query_page(local_id, request.request_id, request.condition, request.pinyin, request.offset, request.page_size, request.mode); break;
+        case SessionOperation::kRefineCandidates:
+        case SessionOperation::kCancelRefinement:
+            response.engine = port_.refine_candidates(local_id, request.request_id, request.query_request_id,
+                operation == SessionOperation::kCancelRefinement); break;
         case SessionOperation::kSelectCandidate: response.engine = port_.select_candidate(local_id, request.request_id, request.candidate_index); break;
         case SessionOperation::kResetSession: response.engine = port_.reset_session(local_id, request.request_id); break;
         case SessionOperation::kRecordSelected: response.engine = port_.record_selection(local_id, request.request_id, request.pinyin, request.word, request.condition_id); break;

@@ -106,7 +106,7 @@ public:
 
 	void setUiLessMode(bool value) { m_uiLessMode = value; if (value) m_visible = false; }
 	bool getUiLessMode() const { return m_uiLessMode; }
-	void showCandidateDlg(bool value) { m_visible = value && !m_uiLessMode; }
+	void showCandidateDlg(bool value) { if (!value) cancel_refinement(); m_visible = value && !m_uiLessMode; }
 	bool isVisible() const { return m_visible; }
 	void setInputArea(const CRect&, bool show) { if (show) showCandidateDlg(true); }
 	void setParentWnd(HWND) {}
@@ -131,6 +131,9 @@ private:
 	bool selectVisualNeighbor(int rowDelta);
 	void loaderMain();
 	void applyLoadedCandidates();
+    void cancel_refinement(bool remote = true);
+    void poll_refinement();
+    void schedule_refinement(UINT delay_ms);
 	static LRESULT CALLBACK LoaderWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
 	void notifyComposition();
 	void refreshSegmentation(const CString& before);
@@ -201,12 +204,17 @@ private:
 	std::vector<std::uint32_t> m_itemCenters;
 	struct LoadRequest
 	{
+		enum class Kind { kPage, kRefinement, kCancelRefinement };
+		Kind kind = Kind::kPage;
+		std::uint64_t refinement_epoch = 0;
 		std::uint64_t version = 0;
 		coral::text_service::CandidateLookup query;
 		std::shared_ptr<coral::text_service::CandidateProvider> source;
 	};
 	struct LoadResult
 	{
+		LoadRequest::Kind kind = LoadRequest::Kind::kPage;
+		std::uint64_t refinement_epoch = 0;
 		std::uint64_t version = 0;
 		HRESULT status = E_FAIL;
 		coral::text_service::CandidateSnapshot snapshot;
@@ -218,4 +226,9 @@ private:
 	std::optional<LoadRequest> m_pendingLoad;
 	std::vector<LoadResult> m_loadedResults;
 	bool m_stopLoader = false;
+    std::optional<LoadRequest> refinement_;
+    std::uint64_t refinement_epoch_ = 0;
+    HWND refinement_window_ = nullptr;
+    bool refinement_polling_ = false, refinement_started_ = false;
+    ULONGLONG refinement_due_ = 0;
 };

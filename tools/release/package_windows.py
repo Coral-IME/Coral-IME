@@ -4,7 +4,7 @@ import argparse,json,os,re,shutil,struct,subprocess,sys
 sys.dont_write_bytecode=True
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'data'))
 from paths import CODE_ROOT,digest,output_path,require_files
-from runtime_manifest import inventory,verify,verify_runtime
+from runtime_manifest import inventory,verify,verify_runtime,character_model_info
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'checks'))
 from verify_engine_linkage import imported_libraries
 from product_identity import load_identity
@@ -42,6 +42,16 @@ def machine(path):
         if stream.read(4)!=b'PE\0\0':raise ValueError('Invalid PE header')
         return struct.unpack('<H',stream.read(2))[0]
 
+def package_character_model(runtime,provenance,required=False):
+    path=Path(runtime)/'data/generallexicon/character_model.coral'
+    expected=provenance.get('character_model')
+    if not path.exists() and expected is None and not required:return None
+    if not path.is_file() or not expected:
+        raise ValueError('Required character model is missing or has no build provenance')
+    actual=character_model_info(path)
+    if actual!=expected:raise ValueError('Character model differs from build provenance')
+    return actual
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--build-dir',type=Path,required=True,help='Configured x64 build tree, Release outputs')
@@ -49,6 +59,7 @@ def main():
     parser.add_argument('--output-dir',type=Path,required=True);parser.add_argument('--version',required=True)
     parser.add_argument('--makensis',type=Path,help='Optional explicit compiler; omitted means staging only')
     parser.add_argument('--sign-mode',choices=['None','LocalTest','Store','Artifact'],default='None')
+    parser.add_argument('--require-character-model',action='store_true',help='Reject packages missing recorded CCHLM001 weights')
     parser.add_argument('--demo',action='store_true',help='Mark the demo installer; launch manually from the Start menu')
     parser.add_argument('--manual-launch',action='store_true',help='Launch from the Start menu; use standard NSIS without ShellExecAsUser')
     args=parser.parse_args()
@@ -70,6 +81,7 @@ def main():
             if machine(binaries/name)!=0x8664:raise ValueError('Expected x64 binary: '+name)
             if {'langengine.dll','coral_engine_core.dll'}.intersection(imported_libraries(binaries/name)):
                 raise ValueError('Binary still depends on a removed engine DLL: '+name)
+        character_info=package_character_model(runtime,provenance,args.require_character_model)
         if args.makensis and not args.makensis.is_file():raise ValueError('NSIS compiler missing')
         root=output_path(args.output_dir,[args.build_dir,runtime,args.x86_tsf],directory=True)
         package=root/'package/x64';package.mkdir(parents=True)
@@ -88,6 +100,10 @@ def main():
         data=package/'data';general=data/'generallexicon';general.mkdir(parents=True)
         for name in ('bushou.marisa','bushou.dat','stroke.marisa','stroke.dat','dw.coral'):shutil.copyfile(runtime/'data'/name,data/name)
         for name in ('english.dat','english.marisa','correction_pinyin_model.dat','char_lm.dat'):shutil.copyfile(runtime/'data/generallexicon'/name,general/name)
+        if character_info:
+            shutil.copyfile(runtime/'data/generallexicon/character_model.coral',general/'character_model.coral')
+            if character_model_info(general/'character_model.coral')!=character_info:
+                raise ValueError('Character model changed during package collection')
         shutil.copyfile(runtime/'dictionary_bundle.dictpack.lzma2',general/'dictionary_bundle.dictpack.lzma2')
         for name in GENERATORS:shutil.copyfile(binaries/name,general/name)
         shutil.copytree(runtime/'data/opencc',data/'opencc');shutil.copytree(runtime/'data/doublepinyin',data/'doublepinyin')
@@ -115,6 +131,7 @@ def main():
             installer=root/('coralpinyin-window-x64-'+args.version+'.exe')
             command=[str(args.makensis.resolve()),'/NOCD','/INPUTCHARSET','UTF8','-DARCH=x64','-DDBG=0','-DPRODUCT_VERSION='+args.version,
                 '-DPACKAGE_DIR='+str(package),'-DOUTPUT_FILE='+str(installer)]
+            if character_info:command+=['-DCORAL_PACKAGE_CHARACTER_MODEL=1']
             if args.demo:command+=['-DCORAL_DEMO_PACKAGE=1']
             if args.demo or args.manual_launch:command+=['-DCORAL_MANUAL_LAUNCH=1']
             if args.sign_mode!='None':command+=['-DCORAL_SIGN_SCRIPT='+str(sign),'-DCORAL_SIGN_MODE='+args.sign_mode]
@@ -123,6 +140,7 @@ def main():
             if args.sign_mode!='None':subprocess.run(['powershell.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',str(sign),'-Mode',args.sign_mode,'-FilePath',str(installer)],check=True)
         record={'format_version':1,'complete':True,'version':args.version,'sign_mode':args.sign_mode,'installer_compiled':bool(installer),
             'edition':'demo' if args.demo else 'standard',
+            'character_model':character_info,
             'manual_launch':args.demo or args.manual_launch,
             'runtime':{key:provenance.get(key) for key in ('data_version','engine_version','model_mode','installer_bins_match')},
             'runtime_manifest_sha256':digest(runtime/'runtime-manifest.json'),'x86_tsf_sha256':digest(args.x86_tsf),

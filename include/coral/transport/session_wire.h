@@ -10,7 +10,7 @@
 namespace coral::transport
 {
 constexpr std::uint32_t kWireMagic = 0x34575343; // CSW4，小端序。
-constexpr std::uint16_t kWireVersion = 5;
+constexpr std::uint16_t kWireVersion = 6;
 constexpr std::size_t kEnvelopeBytes = 72;
 constexpr std::uint32_t kMaxPayloadBytes = 1024 * 1024;
 constexpr std::uint32_t kMaxStringBytes = 256 * 1024;
@@ -22,7 +22,8 @@ enum class SessionOperation : std::uint16_t
     kParseFull = 5, kSelectCandidate = 6, kResetSession = 7,
     kFlushUserHistory = 8, kCancel = 9, kPing = 10,
     kRecordSelected = 11, kRevertLastAction = 12, kApplyCandidateAction = 13,
-    kClearCache = 14, kUpdateLexicon = 15, kUpdateConfig = 16
+    kClearCache = 14, kUpdateLexicon = 15, kUpdateConfig = 16,
+    kRefineCandidates = 17, kCancelRefinement = 18
 };
 // 内存中的消息；编译器布局绝不直接复制到线路上。
 struct SessionRequest
@@ -35,6 +36,7 @@ struct SessionRequest
     std::uint64_t client_id = 0;
     std::uint64_t deadline_tick_ms = 0;
     std::uint64_t cancel_request_id = 0;
+    std::uint64_t query_request_id = 0;
     composition::KeyEvent key_event;
     composition::InputContext input_context;
     std::string condition;

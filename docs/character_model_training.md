@@ -51,6 +51,6 @@ python tests/language_model/test_character_training.py build/neural-on/coralpiny
 
 训练测试需要额外的 PyTorch 环境，按上述命令单独运行，不增加普通 CTest 的依赖。它实际训练一个随机网络，检查验证损失下降、验证字符不进入词表、训练验证重叠拒绝及原生推理一致性。普通 CTest 保持纯 Python/C++ 合成模型和解码器测试。
 
-字符交叉熵只验证语言建模能力；最终要在固定语料、相同词库、相同用户历史下比较开启/关闭模型后的首选命中、文字正确率、纠正与误伤、P50/P95 延迟。模型负责重排已有最多 32 条完整中文路径，不会补回未召回的候选或修复拼音切分。后续自有模型达标后，再单独加入编译打包的数据流程；当前构建不会将实验权重带入发布包。
+字符交叉熵只验证语言建模能力；最终要在固定语料、相同词库、相同用户历史下比较开启/关闭模型后的首选命中、文字正确率、纠正与误伤、P50/P95 延迟。模型负责重排已有最多 32 条完整中文路径，不会补回未召回的候选或修复拼音切分。自有模型达标后，可通过 build_runtime.py --character-model PATH 显式选择权重；package_windows.py --require-character-model 可确保打包时不漏带。源码不包含模型权重。
 
 PyTorch 接口参考：[因果注意力](https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html)、[检查点加载](https://docs.pytorch.org/docs/stable/generated/torch.load.html)。

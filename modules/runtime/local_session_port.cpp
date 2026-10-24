@@ -1,4 +1,7 @@
 #include "coral/composition/session_port.h"
+#if CORAL_ENABLE_CHARACTER_MODEL
+#include "coral/language_model/character_rerank.h"
+#endif
 #include "coral/composition/composition_session.h"
 #include "text_file_helpers.hpp"
 #include "core_operations.h"
@@ -52,6 +55,9 @@ public:
         : owns_runtime_(owns_runtime), runtime_generation_(coral::runtime::runtime_ready() ? coral::runtime::runtime_generation() : 0) {}
     ~LocalSessionPort() override
     {
+#if CORAL_ENABLE_CHARACTER_MODEL
+        reranker_.stop();
+#endif
         std::lock_guard<std::mutex> lock(runtime_gate);
         sessions_.clear();
         if (owns_runtime_ && current_runtime()) coral::runtime::stop_runtime();
@@ -85,6 +91,7 @@ public:
         const bool valid = static_cast<std::uint32_t>(event.key) <= static_cast<std::uint32_t>(Key::kDelete) &&
             event.codepoint <= 0x10ffff && (event.codepoint < 0xd800 || event.codepoint > 0xdfff);
         return invoke(token, request_id, valid, [&](SessionState& state, SessionResult& result) {
+            state.refinement.reset();
             result.output = state.session.send_key(event, context);
         });
     }
@@ -95,30 +102,88 @@ public:
             offset >= 0 && offset <= std::numeric_limits<int>::max() - page_size &&
             (mode == kModeQuanpin || mode == kModeDoublepinyin);
         return invoke(token, request_id, valid, [&](SessionState& state, SessionResult& result) {
+            state.refinement.reset();
+#if CORAL_ENABLE_CHARACTER_MODEL
+            language_model::CharacterRerankBatch batch;
+            language_model::CharacterRerankScope capture(batch);
+#endif
             state.session.set_page_size(page_size);
             result.output = state.session.query_page(condition, pinyin, offset, mode);
+#if CORAL_ENABLE_CHARACTER_MODEL
+            if (offset == 0 && !batch.empty() && !result.output.candidates.empty()) {
+                auto next = std::make_unique<Refinement>();
+                next->query_request_id = request_id; next->condition = condition; next->pinyin = pinyin;
+                next->page_size = page_size; next->mode = mode; next->batch = std::move(batch);
+                state.refinement = std::move(next);
+                result.value = kRefinementPending;
+            }
+#endif
         });
+    }
+    SessionResult refine_candidates(SessionToken token, std::uint64_t request_id,
+        std::uint64_t query_request_id, bool cancel) override
+    {
+        return invoke(token, request_id, query_request_id != 0, [&](SessionState& state, SessionResult& result) {
+#if CORAL_ENABLE_CHARACTER_MODEL
+            if (!state.refinement || state.refinement->query_request_id != query_request_id) return;
+            if (cancel) { state.refinement.reset(); return; }
+            auto& refinement = *state.refinement;
+            if (!refinement.task) {
+                refinement.task = reranker_.submit(std::move(refinement.batch));
+                result.value = kRefinementPending;
+                return;
+            }
+            auto task = refinement.task;
+            language_model::CharacterRerankBatch completed;
+            {
+                std::lock_guard<std::mutex> lock(task->mutex);
+                if (task->cancelled) { state.refinement.reset(); return; }
+                if (!task->finished) { result.value = kRefinementPending; return; }
+                if (!task->succeeded) { state.refinement.reset(); return; }
+                completed = std::move(task->batch);
+            }
+            // 已完成的分数只用于完全一致的候选输入；重建阶段绝不调用神经计算。
+            language_model::CharacterRerankScope replay(static_cast<const language_model::CharacterRerankBatch&>(completed));
+            coral::runtime::clear_parse_cache();
+            state.session.set_page_size(refinement.page_size);
+            auto output = state.session.query_page(refinement.condition, refinement.pinyin, 0, refinement.mode);
+            if (replay.replayed_all() && !output.candidates.empty()) {
+                result.output = std::move(output); result.value = kRefinementReady;
+            } else {
+                language_model::CharacterRerankBatch ignored;
+                language_model::CharacterRerankScope baseline(ignored);
+                coral::runtime::clear_parse_cache();
+                state.session.query_page(refinement.condition, refinement.pinyin, 0, refinement.mode);
+            }
+            state.refinement.reset();
+#endif
+        }, !cancel);
     }
     SessionResult select_candidate(SessionToken token, std::uint64_t request_id, int index) override
     {
         return invoke(token, request_id, index >= 0 && index < kMaxPageSize, [&](SessionState& state, SessionResult& result) {
+            invalidate_refinements();
             result.output = state.session.select_index(index);
         });
     }
     SessionResult reset_session(SessionToken token, std::uint64_t request_id) override
     {
-        return invoke(token, request_id, true, [](SessionState& state, SessionResult& result) { result.output = state.session.reset(); });
+        return invoke(token, request_id, true, [](SessionState& state, SessionResult& result) {
+            state.refinement.reset(); result.output = state.session.reset();
+        });
     }
     SessionResult record_selection(SessionToken token, std::uint64_t request_id, const std::string& pinyin,
         const std::string& word, std::uint32_t condition_id) override
     {
         return invoke(token, request_id, valid_text(pinyin) && valid_text(word), [&](SessionState&, SessionResult& result) {
+            invalidate_refinements();
             coral::runtime::remember_candidate(pinyin, word, condition_id); result.value = condition_id;
         });
     }
     SessionResult revert_selection(SessionToken token, std::uint64_t request_id, const std::string& word) override
     {
         return invoke(token, request_id, valid_text(word), [&](SessionState&, SessionResult& result) {
+            invalidate_refinements();
             result.result = coral::runtime::revert_phrase_learning(word);
         });
     }
@@ -126,15 +191,21 @@ public:
         const std::string& word, CandidateAction action, LanguageVariant variant) override
     {
         return invoke(token, request_id, valid_text(pinyin) && valid_text(word) && IsValidCandidateAction(action) && IsValidLanguageVariant(variant),
-            [&](SessionState&, SessionResult& result) { result.result = coral::runtime::apply_candidate_rule(pinyin, word, action, variant); });
+            [&](SessionState&, SessionResult& result) {
+                invalidate_refinements(); result.result = coral::runtime::apply_candidate_rule(pinyin, word, action, variant);
+            });
     }
     SessionResult clear_cache(SessionToken token, std::uint64_t request_id) override
     {
-        return invoke(token, request_id, true, [](SessionState&, SessionResult&) { coral::runtime::clear_parse_cache(); });
+        return invoke(token, request_id, true, [&](SessionState&, SessionResult&) {
+            invalidate_refinements(); coral::runtime::clear_parse_cache();
+        });
     }
     SessionResult refresh_lexicon(SessionToken token, std::uint64_t request_id) override
     {
-        return invoke(token, request_id, true, [](SessionState&, SessionResult&) { coral::runtime::refresh_lexicon_state(); });
+        return invoke(token, request_id, true, [&](SessionState&, SessionResult&) {
+            invalidate_refinements(); coral::runtime::refresh_lexicon_state();
+        });
     }
     SessionResult apply_settings(SessionToken token, std::uint64_t request_id, const SessionSettings& settings) override
     {
@@ -147,15 +218,30 @@ public:
                 result.message = "stale session settings revision"; return;
             }
             state.settings = settings;
+            state.refinement.reset();
             if (state.settings->fuzzy_choices.empty()) state.settings->fuzzy_choices.assign(FUZZY_CHOICES, 0);
         }, false);
     }
 private:
+    struct Refinement {
+#if CORAL_ENABLE_CHARACTER_MODEL
+        std::uint64_t query_request_id = 0;
+        std::string condition, pinyin;
+        int page_size = 0, mode = 0;
+        language_model::CharacterRerankBatch batch;
+        std::shared_ptr<language_model::CharacterRerankTask> task;
+        ~Refinement() { if (task) task->cancelled = true; }
+#endif
+    };
     struct SessionState
     {
         CompositionSession session;
         std::optional<SessionSettings> settings;
+        std::unique_ptr<Refinement> refinement;
     };
+    void invalidate_refinements() {
+        for (auto& entry : sessions_) entry.second.refinement.reset();
+    }
     static SessionResult reply(SessionToken token, std::uint64_t request_id, SessionStatus status = SessionStatus::kOk)
     {
         SessionResult result;
@@ -194,6 +280,11 @@ private:
         try
         {
             std::optional<SessionSettingsScope> settings_scope;
+            // 所有会话操作（包括翻页和选中后的再解析）均禁止内联神经推理。
+#if CORAL_ENABLE_CHARACTER_MODEL
+            language_model::CharacterRerankBatch ignored;
+            language_model::CharacterRerankScope baseline(ignored);
+#endif
             if (activate) {
                 coral::runtime::refresh_runtime_settings();
                 settings_scope.emplace(found->second.settings);
@@ -216,6 +307,14 @@ private:
     const std::uint64_t runtime_generation_;
     bool owns_runtime_ = false;
     std::unordered_map<SessionToken, SessionState> sessions_;
+#if CORAL_ENABLE_CHARACTER_MODEL
+    language_model::AsyncCharacterReranker reranker_{[] {
+#if defined(_WIN32)
+        // 模型让出 CPU 调度优先级，低配置机器也优先处理前台按键。
+        ::SetThreadPriority(::GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#endif
+    }};
+#endif
 };
 }
 

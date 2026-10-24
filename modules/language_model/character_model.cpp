@@ -207,7 +207,7 @@ bool CharacterModel::load_file(const std::filesystem::path& path, std::string& e
 }
 
 bool CharacterModel::score_candidates(std::string_view context, const std::vector<std::string_view>& texts,
-    std::vector<double>& scores) const {
+    std::vector<double>& scores, const std::function<bool()>& cancelled) const {
     if (!impl_ || texts.size() > 128) return false;
     try {
         const auto& model = *impl_;
@@ -217,6 +217,7 @@ bool CharacterModel::score_candidates(std::string_view context, const std::vecto
         // 前文最多取末尾 32 字；超出词表时从后续合法字重新建立条件。
         const size_t begin = scalars.size() > 32 ? scalars.size() - 32 : 0;
         for (size_t i = begin; i < scalars.size(); ++i) {
+            if (cancelled && cancelled()) return false;
             const auto found = model.tokens.find(scalars[i]);
             state = found == model.tokens.end() ? model.initial : model.advance(state, found->second);
         }
@@ -224,6 +225,7 @@ bool CharacterModel::score_candidates(std::string_view context, const std::vecto
         std::vector<Node> nodes(1);
         std::vector<double> result(texts.size(), std::numeric_limits<double>::quiet_NaN());
         for (size_t output = 0; output < texts.size(); ++output) {
+            if (cancelled && cancelled()) return false;
             if (!decode(texts[output], scalars) || scalars.empty() || scalars.size() > 64 ||
                 state.length + scalars.size() > model.positions) continue;
             std::vector<uint32_t> ids;
@@ -248,6 +250,7 @@ bool CharacterModel::score_candidates(std::string_view context, const std::vecto
         std::function<void(size_t, const Impl::State&, double)> visit;
         visit = [&](size_t at, const Impl::State& previous, double total) {
             for (auto child : nodes[at].children) {
+                if (cancelled && cancelled()) throw std::runtime_error("character scoring cancelled");
                 const auto& node = nodes[child];
                 const double score = total + previous.next[node.token];
                 if (!std::isfinite(score)) throw std::runtime_error("character model score");
@@ -256,6 +259,7 @@ bool CharacterModel::score_candidates(std::string_view context, const std::vecto
             }
         };
         visit(0, state, 0);
+        if (cancelled && cancelled()) return false;
         scores = std::move(result); return true;
     } catch (const std::exception&) { return false; }
 }

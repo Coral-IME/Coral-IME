@@ -12,6 +12,8 @@ namespace coral::composition {
 
 using SessionToken = std::uint64_t;
 constexpr std::size_t kSessionFuzzyChoiceCount = 19;
+constexpr std::uint32_t kRefinementPending = 1;
+constexpr std::uint32_t kRefinementReady = 2;
 
 enum class SessionStatus : std::uint32_t {
     kOk = 0,
@@ -74,6 +76,12 @@ public:
                                      int offset, int page_size, int mode) = 0;
     virtual SessionResult select_candidate(SessionToken session_id, std::uint64_t request_id,
                                            int index_in_page) = 0;
+    // 只轮询指定基础查询的优化；默认端口不提供此能力，绝不退回同步推理。
+    virtual SessionResult refine_candidates(SessionToken session_id, std::uint64_t request_id,
+        std::uint64_t query_request_id, bool cancel = false) {
+        SessionResult result; result.session_id = session_id; result.request_id = request_id;
+        result.result = true; return result;
+    }
     virtual SessionResult reset_session(SessionToken session_id, std::uint64_t request_id) = 0;
     virtual SessionResult record_selection(SessionToken session_id, std::uint64_t request_id,
                                           const std::string& pinyin, const std::string& word,

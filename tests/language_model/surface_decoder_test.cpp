@@ -1,9 +1,12 @@
 #include "pch.h"
 #include "candidate_decoder.h"
 #include "lexicon_catalog.h"
+#include "coral/language_model/character_rerank.h"
 #include <functional>
 #include <iostream>
 #include <random>
+#include <future>
+#include <thread>
 
 namespace {
 struct Edge { int from, to; uint32_t id; float fallback; };
@@ -156,6 +159,56 @@ int main(int argc, char** argv) {
         const int long_length = std::max(4, CORAL_CHARACTER_RERANK_THRESHOLD + 1);
         std::vector<Edge> long_edges{{0,1,12,-1.f},{0,1,13,-1.f}};
         for (int at = 1; at < long_length; ++at) long_edges.push_back({at,at+1,12,-1.f});
+        {
+            using namespace coral::language_model;
+            CharacterRerankBatch captured;
+            {
+                CharacterRerankScope capture(captured);
+                decode(long_edges,long_length,kInvalidPhraseId,1.f,model,&first);
+            }
+            std::string baseline;
+            for (int i = 0; i < long_length; ++i) baseline += "在";
+            if (first != baseline || captured.empty()) { std::cerr << "Capture must return baseline without scoring"; return 21; }
+            std::promise<void> entered, release;
+            auto released = release.get_future().share();
+            AsyncCharacterReranker worker([&] { entered.set_value(); released.wait(); });
+            auto obsolete = worker.submit(captured);
+            entered.get_future().wait();
+            auto replaced = worker.submit(captured);
+            auto latest = worker.submit(captured);
+            release.set_value();
+            const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            bool done = false, succeeded = false;
+            CharacterRerankBatch completed;
+            while (!done && std::chrono::steady_clock::now() < until) {
+                {
+                    std::lock_guard<std::mutex> lock(latest->mutex);
+                    done = latest->finished; succeeded = latest->succeeded;
+                    if (done) completed = latest->batch;
+                }
+                if (!done) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            worker.stop();
+            if (!obsolete->cancelled || !replaced->cancelled || !done || !succeeded) {
+                std::cerr << "Latest-only worker or shutdown failed"; return 22;
+            }
+            {
+                CharacterRerankScope replay(static_cast<const CharacterRerankBatch&>(completed));
+                decode(long_edges,long_length,kInvalidPhraseId,1.f,model,&first);
+                if (!replay.replayed_all() || first != "再" + baseline.substr(std::string("在").size())) {
+                    std::cerr << "Async scores changed decoder result"; return 23;
+                }
+            }
+            std::vector<double> scores{123};
+            int checks = 0;
+            if (model.character_model()->score_candidates("", {"在在在在", "再在在在"}, scores,
+                [&] { return ++checks >= 3; }) || scores != std::vector<double>{123}) {
+                std::cerr << "Cancellation published partial scores"; return 24;
+            }
+            // 不同上下文不能误用旧分数，也不能在重放范围内退回同步推理。
+            CharacterRerankScope replay(static_cast<const CharacterRerankBatch&>(completed));
+            if (CharacterRerankScope::score(model.shared_character_model(), "甲", {"在在在在", "再在在在"}, scores) || replay.replayed_all()) return 25;
+        }
         for (bool enabled : {false, true, false}) {
             decode(long_edges,long_length,kInvalidPhraseId,1.f,model,&first,0,enabled);
             std::string expected = enabled ? "再" : "在";

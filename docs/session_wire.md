@@ -11,9 +11,9 @@
 | 偏移 | 字节数 | 字段 | 要求 |
 |---|---|---|---|
 | 0 | 4 | magic | ASCII `CSW4` |
-| 4 | 2 | version | 必须为 5（新增智能预测配置，旧版本明确拒绝） |
+| 4 | 2 | version | 必须为 6（新增两阶段候选操作，旧版本明确拒绝） |
 | 6 | 2 | envelope_size | 必须为 72 |
-| 8 | 2 | operation | 1—16，见下表 |
+| 8 | 2 | operation | 1—18，见下表 |
 | 10 | 2 | direction | 请求 0，回复 1，无其他标志 |
 | 12 | 4 | payload_size | 至多 1,048,576；帧长度必须精确匹配 |
 | 16 | 8 | request_id | 请求关联标识 |
@@ -44,6 +44,7 @@
 | 13 apply_candidate_action | pinyin:text、word:text、candidate_action:u8、variant:u8 |
 | 14 clear_cache、15 refresh_lexicon | 空 |
 | 16 apply_settings | revision:u64、u_mode:bool、v_mode:bool、smart_prediction:bool、pinyin_correction:bool、full_width:bool、traditional_chinese:bool、show_infos:bool、limit_count:i32、combined_lexicon_version:i32、fuzzy_count:u32、fuzzy_choices:i32[] |
+| 17 refine_candidates、18 cancel_refinement | query_request_id:u64；必须非零，指向同一会话的基础查询传输编号 |
 
 编解码共用相同业务边界：key 为现有 Key 的 0—14，codepoint 为 0 或 Unicode 标量；offset 非负；page_size 和 limit_count 为 1—512；mode 为全拼 0 或双拼 1；candidate_index 为 0—511；cancel_request_id 非零；模糊选项最多 64 个。候选动作值保留现有词汇领域契约，脚本变体仅简体/繁体；没有把既有词库类别编码为脚本变体。模糊选项的含义与组合词库版本仍由配置/会话层解释。
 
@@ -55,19 +56,21 @@ status:u32、result:bool、value:u32、consumed:bool、candidates_visible:bool�
 
 status 只接受现有 SessionStatus 的 0—5，offset 非负，候选最多 512 个。即使每个字符串都未超限，全部字段累计超过 1MiB 也拒绝。解码先检查剩余字节可容纳声明的最小条目数，再分配条目容器。
 
+ParseFull 回复的 value=1 表示有可选的第二阶段优化，基础候选已经可用。操作 17 的 value=1 表示后台任务尚未完成，value=2 表示完整优化候选，value=0 表示取消、过期、不适用或预算内无法完成；后两种未提供候选的情况均保留前端基础列表。操作 18 只取消其指定基础查询，不得取消之后的新查询。优化首次轮询才启动独立计算，所有轮询和取消本身不等待模型。重连不恢复、不重放旧基础快照的优化。宿主与 TSF 必须成套更新。
+
 ## 失败与 Windows 传输
 
 状态线值：Ok=0、InvalidSession=1、Unavailable=2、Timeout=3、ProtocolError=4、InternalError=5。新增状态需要显式升级协议，不能让旧客户端猜测含义。
 
 无效输入返回 false 和错误信息，编码目标帧、解码目标消息保持原值；成功清空旧错误。只有完整验证后才提交消息。内存不足等标准库异常不属于无效帧的 bool 返回契约。
 
-Windows 地址是 `\\.\pipe\CoralPinyin.Session.v4.<Windows会话编号>`，启动锁是 `Local\CoralPinyin.SessionHost.v4.<Windows会话编号>`。旧 CRAL 帧、版本 1—3 和未知未来版本均拒绝。所有运行中的客户端和宿主需要成套更新；旧 renderer 和 UI/service 管道不受这次会话协议替换影响。
+Windows 地址是 `\\.\pipe\CoralPinyin.Session.v4.<Windows会话编号>`，启动锁是 `Local\CoralPinyin.SessionHost.v4.<Windows会话编号>`。旧 CRAL 帧、版本 1—5 和未知未来版本均拒绝。所有运行中的客户端和宿主需要成套更新；旧 renderer 和 UI/service 管道不受这次会话协议替换影响。
 
 客户端检查操作、client_id、request_id、session_id 和已知代次的关联关系，一般错配返回 ProtocolError，宿主明确返回代次变更时返回 InvalidSession 并清握手缓存；迟到回复返回 Timeout，候选不交给调用方。缺失或异常管道按既有 Windows 错误映射处理，不能把握手失败一概描述为“宿主不存在”。首次握手与业务请求仍使用既有分别生成的截止值，尚未改为一个涵盖两者的总时间预算。
 
 截止值使用同一 Windows 机器的 GetTickCount64 时间基准，不是跨机器时间戳。取消为尽力通知：已进入执行的词典或学习操作可能有副作用；Timeout 不保证未执行、回滚或恰好执行一次。B2b2 已实现进程/client_id/代次归属、重连失效、固定八个工作槽和可中断传输；当前数量限制、停止事件和在途操作限制见 [宿主生命周期](session_host_lifecycle.md)。
 
-本地端口文本政策及初始化责任见 [会话契约](composition_sessions.md)。本轮公开字段和类型改名保持本节所列字节布局，未升级线协议。
+本地端口文本政策及初始化责任见 [会话契约](composition_sessions.md)。历史改名保持字节布局；两阶段候选新增操作 17、18，将版本升级为 6，信封与普通候选回复的布局不变。
 
 ## 验证范围
 

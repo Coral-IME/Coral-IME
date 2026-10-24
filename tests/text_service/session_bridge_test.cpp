@@ -23,6 +23,8 @@ struct Script {
     int destroyed = 0;
     bool healthy = true;
     bool throw_query = false;
+    bool refinement = false;
+    std::uint64_t refinement_target = 0;
 };
 
 class ScriptPort final : public SessionPort {
@@ -41,6 +43,15 @@ public:
         result.output.candidates.has_next_page = true;
         Candidate candidate;
         candidate.word = "sample"; candidate.pinyin = "pin"; candidate.display_text = "display";
+        result.output.candidates.candidates.push_back(candidate);
+        if (script_->refinement) result.value = kRefinementPending;
+        return result;
+    }
+    SessionResult refine_candidates(SessionToken, std::uint64_t id, std::uint64_t target, bool cancel) override {
+        script_->refinement_target = target;
+        auto result = reply(cancel ? "cancel_refinement" : "refine", id);
+        result.value = cancel ? 0 : kRefinementReady;
+        Candidate candidate; candidate.word = "refined"; candidate.pinyin = "pin";
         result.output.candidates.candidates.push_back(candidate);
         return result;
     }
@@ -75,6 +86,35 @@ struct Fixture {
     CandidateLookup lookup;
     Fixture() { lookup.session_id = bridge.create_session(); lookup.request_id = 987; require(lookup.session_id != 0, "logical session opened"); }
 };
+
+void refinement_identity() {
+    Fixture f; f.scripts[0]->refinement = true;
+    CandidateSnapshot snapshot;
+    require(f.bridge.query(f.lookup, snapshot) == S_OK && snapshot.refinement_pending, "Base snapshot must expose optional refinement");
+    const auto base_wire_id = f.scripts[0]->request_ids.back();
+    auto other = f.lookup; ++other.request_id;
+    const auto calls = f.scripts[0]->calls.size();
+    require(f.bridge.refine(other, snapshot) == S_FALSE && f.scripts[0]->calls.size() == calls,
+        "Wrong UI revision must not reach the host");
+    require(f.bridge.refine(f.lookup, snapshot) == S_OK && !snapshot.refinement_pending && snapshot.words[0] == "refined" &&
+        f.scripts[0]->refinement_target == base_wire_id && snapshot.request_id == f.lookup.request_id,
+        "Refinement confused UI revision and original transport query ID");
+    require(f.bridge.refine(f.lookup, snapshot) == S_FALSE, "Completed snapshot must not restart inference");
+    auto old = f.lookup;
+    require(f.bridge.query(f.lookup, snapshot) == S_OK, "Second base query");
+    ++f.lookup.request_id;
+    require(f.bridge.query(f.lookup, snapshot) == S_OK, "New composition base query");
+    const auto new_target = f.scripts[0]->request_ids.back();
+    f.bridge.cancel_refinement(old);
+    require(f.bridge.refine(old, snapshot) == S_FALSE, "Previous identical input must not poll a newer composition");
+    f.bridge.cancel_refinement(f.lookup);
+    require(f.scripts[0]->calls.back() == "cancel_refinement" && f.scripts[0]->refinement_target == new_target &&
+        f.bridge.refine(f.lookup, snapshot) == S_FALSE, "Cancel must target exactly the matching base query");
+    require(f.bridge.query(f.lookup, snapshot) == S_OK, "Base before disconnect");
+    f.scripts[0]->replies = {SessionStatus::kUnavailable};
+    require(f.bridge.refine(f.lookup, snapshot) == S_FALSE && f.waits.size() == 1,
+        "Old refinement must not reconnect or replay into another host");
+}
 
 void revisions() {
     Fixture f;
@@ -207,6 +247,6 @@ void uncertain_settings_and_budget() {
 }
 
 int main() {
-    try { revisions(); recovery_and_snapshot(); retry_policy(); failed_recovery(); uncertain_settings_and_budget(); std::cout << "session bridge boundaries passed\n"; return 0; }
+    try { refinement_identity(); revisions(); recovery_and_snapshot(); retry_policy(); failed_recovery(); uncertain_settings_and_budget(); std::cout << "session bridge boundaries passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

@@ -4,6 +4,7 @@
 #include "candidate_decoder.h"
 #include "support/indexed_string_set.hpp"
 #include "support/parse_metrics.hpp"
+#include "coral/language_model/character_rerank.h"
 
 #include <algorithm>
 #include <cmath>
@@ -692,7 +693,8 @@ void coral::phonetics::CandidateDecoder::rerank_character_paths(
     // 只有参考首选本身满足门槛时没有可重排对象，也无需调用模型。
     if (texts.size() < 2) return;
     std::vector<double> selected_scores;
-    const bool scored = model && model->score_candidates(character_context_, texts, selected_scores);
+    const bool scored = model && coral::language_model::CharacterRerankScope::score(
+        language_model_->shared_character_model(), character_context_, texts, selected_scores);
     std::vector<double> scores(paths.size(), std::numeric_limits<double>::quiet_NaN());
     if (scored) {
         for (size_t i = 0; i < indexes.size(); ++i) scores[indexes[i]] = selected_scores[i];

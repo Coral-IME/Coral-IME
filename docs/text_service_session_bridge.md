@@ -4,6 +4,8 @@
 
 ## 所有权与名称
 
+两阶段候选在基础查询成功时记录 UI 版本与其对应的传输请求编号。`refine` 和 `cancel_refinement` 必须匹配这对标识；优化轮询不执行连接恢复或重放，失效、失败和无结果均保留基础候选。后台模型不占用桥接锁，轮询只启动工作、检查完成状态或接收已经评分的结果。控制器的 120ms 停顿定时器和 25ms 轮询均在所有者线程管理；收到结果后还要检查输入/优化代次和前台窗口。提交、导航、编辑、隐藏或会话变化立即停止显示侧接收；显示内容实际改变时递增显示版本，使旧渲染器操作失效。详见 [字符模型](character_language_model.md)。
+
 `SessionBridge` 持有端口和逻辑会话，互斥锁串行化所有调用；工厂与端口不得回调桥接对象。逻辑编号仅在本对象内有效，成功打开远端会话后分配，关闭后不会再次使用。传输请求编号独立递增，耗尽后拒绝；零不是有效编号。远端令牌更换不影响界面持有的逻辑编号。替换端口由旧端口析构清理所属租约，见 [宿主生命周期](session_host_lifecycle.md)。
 
 旧 `EngineCoordinator`、`CandidateDataSource`、`CandidateQuery`、`CandidateViewSnapshot` 分别迁为 `SessionBridge`、`CandidateProvider`、`CandidateLookup`、`CandidateSnapshot`；方法、私有成员和快照字段采用开发准则的命名。旧文件与无人调用的 `queryIfCurrent` 删除。完整映射见 [迁移表](text_service_session_bridge_migration.json)。

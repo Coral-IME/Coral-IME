@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "candidatecontroller.h"
 #include "coreapi.h"
+#include "pipe_session_client.h"
 
 #include <iostream>
 #include <chrono>
@@ -168,9 +169,154 @@ void check_prediction()
     std::cout << "[PASS] Prediction defaults, accumulated context, toggle, reset and boundaries\n";
 }
 
+// 用可阻塞的优化源驱动真实控制器与消息循环，制造正常打字很难稳定撞到的晚到结果。
+class RefinementSource final : public coral::text_service::CandidateProvider {
+public:
+    std::atomic<int> started{0}, cancelled{0};
+    std::atomic<bool> hold{false}, enabled{true};
+    HRESULT query(const coral::text_service::CandidateLookup& lookup,
+        coral::text_service::CandidateSnapshot& snapshot) override {
+        snapshot.request_id = lookup.request_id;
+        snapshot.words = {u8"基础候选", u8"第二候选"}; snapshot.pinyins = {lookup.pinyin, lookup.pinyin};
+        snapshot.refinement_pending = enabled && lookup.pinyin.size() >= 4;
+        return S_OK;
+    }
+    HRESULT refine(const coral::text_service::CandidateLookup& lookup,
+        coral::text_service::CandidateSnapshot& snapshot) override {
+        ++started;
+        const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(700);
+        while (hold && std::chrono::steady_clock::now() < until) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        snapshot.request_id = lookup.request_id;
+        snapshot.words = {u8"优化候选", u8"第二候选"}; snapshot.pinyins = {lookup.pinyin, lookup.pinyin};
+        return S_OK;
+    }
+    void cancel_refinement(const coral::text_service::CandidateLookup&) override { ++cancelled; }
+    HRESULT remember_candidate(coral::composition::SessionToken, const std::string&,
+        const std::string&, std::uint32_t&) override { return S_OK; }
+    bool apply_candidate_rule(coral::composition::SessionToken, const std::string&,
+        const std::string&, coral::CandidateAction, coral::LanguageVariant) override { return false; }
+    HRESULT clear_cache(coral::composition::SessionToken) override { return S_OK; }
+};
+
+void pump_for(int milliseconds) {
+    const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(milliseconds);
+    do {
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    } while (std::chrono::steady_clock::now() < end);
+}
+
+void check_refinement() {
+    auto source = std::make_shared<RefinementSource>();
+    Sink sink;
+    CandidateController controller;
+    controller.setTextService(&sink); controller.set_candidate_provider(source, 1, false);
+    auto config = std::make_shared<coral::tsf::ImeConfigSnapshot>(); config->revision = 1;
+    controller.setConfigSnapshot(config);
+    auto type = [&](const wchar_t* value) { for (auto letter : std::wstring(value)) controller.addLetter(letter); };
+    type(L"bfbdh");
+    require(controller.getCandidateText(0) == L"基础候选" && source->started == 0,
+        "First response waited for model or failed to show baseline");
+    const auto old_version = sink.model.version();
+    const auto old_id = sink.model.item(0)->id;
+    pump_until([&] { return controller.getCandidateText(0) == L"优化候选"; });
+    require(controller.getPinyin() == L"bfbdh" && sink.model.version() != old_version &&
+        sink.model.item(0)->id != old_id && !sink.model.selectById(old_id),
+        "Refinement changed input or reused stale renderer identity");
+    CString text;
+    require(controller.selectCurrentCandidate(text) == 1 && text == L"优化候选", "Refined text cannot commit");
+    controller.Reset(); source->started = 0;
+
+    // 每键仅间隔 1ms，并连续提交与开启下一句，强于日常快速盲打的事件密度。
+    for (int cycle = 0; cycle < 40; ++cycle) {
+        for (auto letter : std::wstring(L"bfbdh")) { controller.addLetter(letter); pump_for(1); }
+        require(controller.selectCurrentCandidate(text) == 1 && text == L"基础候选", "Fast submit used an unseen candidate");
+        controller.Reset();
+    }
+    pump_for(160);
+    require(source->started == 0 && controller.getCandidateText(0).IsEmpty(), "Fast consecutive compositions launched or displayed stale inference");
+
+    // 相同拼音 ABA、追加、删除到空、光标、导航、折叠和会话替换均必须拒绝旧结果。
+    for (int scenario = 0; scenario < 9; ++scenario) {
+        controller.Reset(); controller.set_candidate_provider(source, 1, false);
+        source->started = 0; source->enabled = true; source->hold = true;
+        type(L"bfbdh");
+        pump_until([&] { return source->started.load() != 0; });
+        source->enabled = false;
+        if (scenario == 0) { controller.selectCurrentCandidate(text); controller.Reset(); type(L"bfbdh"); }
+        if (scenario == 1) controller.addLetter(L'a');
+        if (scenario == 2) { while (controller.get_pinyin_length() > 0) controller.back(); controller.Reset(); }
+        if (scenario == 3) controller.moveCursorHome();
+        if (scenario == 4) controller.nextCol();
+        if (scenario == 5) { controller.enterCandidateExpand(); controller.collapseCandidateExpand(); }
+        if (scenario == 6) controller.set_candidate_provider(source, 2, false);
+        if (scenario == 7) controller.showCandidateDlg(false);
+        if (scenario == 8) { config = std::make_shared<coral::tsf::ImeConfigSnapshot>(*config); ++config->revision; controller.setConfigSnapshot(config); }
+        const CString expected = controller.getCandidateText(0);
+        const auto expected_input = controller.getPinyin();
+        const auto expected_version = sink.model.version();
+        source->hold = false;
+        pump_for(180);
+        require(controller.getCandidateText(0) == expected && controller.getPinyin() == expected_input &&
+            sink.model.version() == expected_version, "Late result crossed an input, selection, focus or settings boundary");
+    }
+    controller.Reset(); source->enabled = true; source->hold = false;
+    for (int i = 0; i < 100; ++i) { controller.addLetter(L'h'); pump_for(1); }
+    require(controller.get_pinyin_length() == 40 && !sink.model.empty(), "Key repeat lost baseline or exceeded input limit");
+    while (controller.get_pinyin_length() > 0) { controller.back(); pump_for(1); }
+    controller.Reset(); pump_for(180);
+    require(controller.getCandidateText(0).IsEmpty() && controller.getPinyin().IsEmpty(), "Held backspace was overwritten by a late result");
+    std::cout << "[PASS] Two-stage candidates, 1ms typing/commit cycles, repeat, deletion, ABA, navigation and stale IDs\n";
+}
+
+void check_host_refinement(const char* pinyin, const char* expected) {
+    require(std::getenv("CORAL_TEST_NAMESPACE") && std::getenv("CORAL_USER_DATA_DIR"), "Live probe requires isolated host");
+    auto bridge = std::make_shared<coral::text_service::SessionBridge>([](std::uint32_t) {
+        return coral::transport::make_pipe_session_client(coral::transport::default_session_pipe(), 75);
+    });
+    const auto session = bridge->create_session();
+    require(session != 0, "Cannot open isolated live session");
+    Sink sink;
+    CandidateController controller;
+    controller.setTextService(&sink); controller.set_candidate_provider(bridge, session, false);
+    auto config = std::make_shared<coral::tsf::ImeConfigSnapshot>(); config->revision = 1;
+    controller.setConfigSnapshot(config);
+    const CString raw(CA2W(pinyin, CP_UTF8)), target(CA2W(expected, CP_UTF8));
+    const auto start = std::chrono::steady_clock::now();
+    for (int i = 0; i < raw.GetLength(); ++i) controller.addLetter(raw[i]);
+    const auto baseline = controller.getCandidateText(0);
+    require(!baseline.IsEmpty() && baseline != raw, "Actual host did not return baseline candidates");
+    pump_until([&] { return controller.getCandidateText(0) == target; }, 4);
+    require(controller.getPinyin() == raw, "Actual refinement changed typed letters");
+    std::cout << "[LIVE] baseline=" << CW2A(baseline, CP_UTF8) << " refined=" << expected << " elapsed_ms=" <<
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count() << '\n';
+    CString committed;
+    require(controller.selectCurrentCandidate(committed) == 1 && committed == target, "Live refined commit failed");
+    controller.Reset(); controller.resetConditionWord();
+    for (int i = 0; i < 40; ++i) { controller.addLetter(L'h'); pump_for(1); }
+    const CString held = controller.getPinyin();
+    require(controller.getCandidateText(0) != held, "Actual host repeat became raw letters");
+    pump_for(170);
+    controller.back();
+    require(controller.get_pinyin_length() == 39 && !controller.getCandidateText(0).IsEmpty(), "Background long query blocked deletion");
+    while (controller.get_pinyin_length() > 0) { controller.back(); pump_for(1); }
+    controller.Reset(); pump_for(200);
+    require(controller.getPinyin().IsEmpty() && controller.getCandidateText(0).IsEmpty(), "Live late result restored deleted input");
+    bridge->destroy_session(session);
+    std::cout << "[PASS] Actual host -> bridge -> controller timer -> refined display -> commit; held h and delete\n";
+}
+
 int main(int argc, char** argv)
 {
     try {
+        if (argc == 3 && std::string(argv[1]) == "--live-refinement") {
+            // 标准输入按 UTF-8 传递目标，避免 Windows 窄命令行按系统代码页转换。
+            std::string expected;
+            std::getline(std::cin, expected);
+            check_host_refinement(argv[2], expected.c_str()); return 0;
+        }
+        check_refinement();
         check_prediction();
         coral::tsf::ImeConfigSnapshot shortcuts;
         shortcuts.translation_enabled = true;

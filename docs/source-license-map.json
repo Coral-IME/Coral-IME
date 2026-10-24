@@ -3,6 +3,9 @@
   "project_license": "MPL-2.0",
   "license_documents": ["LICENSE", "LICENSING.md", "THIRD_PARTY_NOTICES.md"],
   "project_paths": [
+    "include/coral/language_model/character_rerank.h",
+    "modules/language_model/character_rerank.cpp",
+    "tests/release/test_character_package.py",
     "tools/data/train_character_model.py",
     "tools/data/requirements_character_model.txt",
     "tests/language_model/test_character_training.py",

@@ -67,7 +67,7 @@ int main()
     hello.client_id = 0x4847464544434241ULL;
     hello.deadline_tick_ms = 0x5857565554535251ULL;
     const std::vector<std::uint8_t> golden{
-        0x43,0x53,0x57,0x34, 5,0,72,0, 1,0,0,0, 0,0,0,0,
+        0x43,0x53,0x57,0x34, 6,0,72,0, 1,0,0,0, 0,0,0,0,
         1,2,3,4,5,6,7,8, 0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,
         0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x28, 0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,
         0x41,0x42,0x43,0x44,0x45,0x46,0x47,0x48, 0x51,0x52,0x53,0x54,0x55,0x56,0x57,0x58,
@@ -82,6 +82,7 @@ int main()
     auto old = golden; old[0] = 'C'; old[1] = 'R'; old[2] = 'A'; old[3] = 'L'; rejects_request(old);
     old = golden; old[4] = 3; rejects_request(old);
     old = golden; old[4] = 4; rejects_request(old);
+    old = golden; old[4] = 5; rejects_request(old);
     SessionRequest parse_fixture;
     parse_fixture.operation = SessionOperation::kParseFull;
     parse_fixture.condition = "ab"; parse_fixture.pinyin = std::string("a\0", 2);
@@ -93,7 +94,13 @@ int main()
     assert(!decode_request(nullptr, 100, null_output, error));
     assert(!decode_request(golden.data(), std::numeric_limits<std::size_t>::max(), null_output, error));
 
-    for (std::uint16_t value = 1; value <= 16; ++value)
+    SessionRequest refine_fixture;
+    refine_fixture.operation = SessionOperation::kRefineCandidates;
+    refine_fixture.query_request_id = 0x0807060504030201ULL;
+    assert(encode_request(refine_fixture, frame, error));
+    assert((std::vector<std::uint8_t>(frame.begin() + kEnvelopeBytes, frame.end()) ==
+        std::vector<std::uint8_t>{1,2,3,4,5,6,7,8}));
+    for (std::uint16_t value = 1; value <= 18; ++value)
     {
         SessionRequest source = hello;
         source.operation = static_cast<SessionOperation>(value);
@@ -104,6 +111,7 @@ int main()
         source.offset = 17; source.page_size = 512; source.mode = coral::composition::kModeDoublepinyin;
         source.candidate_index = 511; source.condition_id = 0xffffffffU;
         source.cancel_request_id = 88;
+        source.query_request_id = 99;
         source.config.revision = 0xffffffffffffffffULL; source.config.limit_count = 512;
         source.config.smart_prediction = false;
         source.config.combined_lexicon_version = -1;
@@ -123,7 +131,9 @@ int main()
         }
     SessionRequest invalid;
     invalid.operation = static_cast<SessionOperation>(0); invalid_request(invalid);
-    invalid.operation = static_cast<SessionOperation>(17); invalid_request(invalid);
+    invalid.operation = static_cast<SessionOperation>(19); invalid_request(invalid);
+    invalid.operation = SessionOperation::kRefineCandidates; invalid_request(invalid);
+    invalid.operation = SessionOperation::kCancelRefinement; invalid_request(invalid);
     invalid.operation = SessionOperation::kParseFull; invalid.page_size = 5;
     invalid.offset = -1; invalid_request(invalid); invalid.offset = 0;
     invalid.page_size = 0; invalid_request(invalid); invalid.page_size = 513; invalid_request(invalid);

@@ -44,6 +44,7 @@ bool SessionBridge::connect(std::uint32_t wait_ms) {
     for (auto& entry : sessions_) {
         entry.second.remote_id = 0;
         entry.second.settings_synced = false;
+        entry.second.refinement_query_id = 0;
     }
     return true;
 }
@@ -138,10 +139,14 @@ HRESULT SessionBridge::query(const CandidateLookup& lookup, CandidateSnapshot& s
                 lookup.offset, lookup.page_size, lookup.mode);
         });
     if (!result) return to_hresult(result.status);
+    auto& state = sessions_.at(lookup.session_id);
+    state.refinement_query_id = result.value == composition::kRefinementPending ? result.request_id : 0;
+    state.refinement_version = lookup.request_id;
     CandidateSnapshot replacement;
     replacement.request_id = lookup.request_id; // UI 版本，与传输层标识不同。
     replacement.offset = result.output.candidates.offset;
     replacement.has_more = result.output.candidates.has_next_page;
+    replacement.refinement_pending = result.value == composition::kRefinementPending;
     for (const auto& candidate : result.output.candidates.candidates) {
         replacement.words.push_back(candidate.word);
         replacement.pinyins.push_back(candidate.pinyin);
@@ -149,6 +154,44 @@ HRESULT SessionBridge::query(const CandidateLookup& lookup, CandidateSnapshot& s
     }
     snapshot = std::move(replacement);
     return S_OK;
+}
+
+HRESULT SessionBridge::refine(const CandidateLookup& lookup, CandidateSnapshot& snapshot) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto found = sessions_.find(lookup.session_id);
+    if (found == sessions_.end() || !port_) return S_FALSE;
+    auto& state = found->second;
+    if (!state.refinement_query_id || state.refinement_version != lookup.request_id || !state.remote_id) return S_FALSE;
+    // 旧基础快照不能通过重连恢复或重放到新的远端会话。
+    const auto request_id = take_request_id();
+    if (!request_id) { state.refinement_query_id = 0; return S_FALSE; }
+    const auto result = port_->refine_candidates(state.remote_id, request_id, state.refinement_query_id);
+    if (!result || (result.value != composition::kRefinementPending && result.value != composition::kRefinementReady)) {
+        state.refinement_query_id = 0; return S_FALSE;
+    }
+    CandidateSnapshot replacement;
+    replacement.request_id = lookup.request_id;
+    replacement.refinement_pending = result.value == composition::kRefinementPending;
+    replacement.has_more = result.output.candidates.has_next_page;
+    replacement.offset = result.output.candidates.offset;
+    for (const auto& candidate : result.output.candidates.candidates) {
+        replacement.words.push_back(candidate.word); replacement.pinyins.push_back(candidate.pinyin);
+        replacement.display_texts.push_back(candidate.display_text);
+    }
+    if (!replacement.refinement_pending) state.refinement_query_id = 0;
+    snapshot = std::move(replacement);
+    return S_OK;
+}
+
+void SessionBridge::cancel_refinement(const CandidateLookup& lookup) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto found = sessions_.find(lookup.session_id);
+    if (found == sessions_.end() || !port_) return;
+    auto& state = found->second;
+    if (!state.refinement_query_id || state.refinement_version != lookup.request_id || !state.remote_id) return;
+    const auto target = state.refinement_query_id;
+    state.refinement_query_id = 0;
+    port_->refine_candidates(state.remote_id, take_request_id(), target, true);
 }
 
 HRESULT SessionBridge::reset(SessionToken session_id) {

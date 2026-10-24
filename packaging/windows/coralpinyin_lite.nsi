@@ -813,6 +813,10 @@ Function CopyDataFiles
   File "${PACKAGE_DIR}\data\generallexicon\english.marisa"
   File "${PACKAGE_DIR}\data\generallexicon\correction_pinyin_model.dat"
   File "${PACKAGE_DIR}\data\generallexicon\char_lm.dat"
+!ifdef CORAL_PACKAGE_CHARACTER_MODEL
+  ; 显式选择的字符神经模型由运行包清单校验后收集。
+  File "${PACKAGE_DIR}\data\generallexicon\character_model.coral"
+!endif
   ; compressed coral_lexicon.csv + coral_languagemodel.csv (decompressed at install time)
   File "${PACKAGE_DIR}\data\generallexicon\dictionary_bundle.dictpack.lzma2"
   File "${PACKAGE_DIR}\data\generallexicon\coral_lexicon_builder.exe"

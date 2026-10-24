@@ -4,7 +4,7 @@ sys.dont_write_bytecode=True
 from pathlib import Path
 import argparse,json,os,shutil,subprocess,sys,uuid
 from paths import digest,output_path,require_files
-from runtime_manifest import inventory,write_runtime,verify_runtime
+from runtime_manifest import inventory,write_runtime,verify_runtime,character_model_info
 
 TOOLS=Path(__file__).resolve().parent
 CONFIG=TOOLS.parents[1]/'resources/config'
@@ -15,6 +15,7 @@ def main():
     for flag in ('source-dir','output-dir','resource-compiler','lexicon-builder','bundle-decoder'):parser.add_argument('--'+flag,type=Path,required=True)
     parser.add_argument('--config-dir',type=Path,default=CONFIG)
     parser.add_argument('--model-dir',type=Path,help='Explicit reuse of two compiled models; no model retraining')
+    parser.add_argument('--character-model',type=Path,help='Optional external CCHLM001 weights; copied with checksum provenance')
     parser.add_argument('--data-version',required=True);parser.add_argument('--engine-version',required=True)
     parser.add_argument('--source-manifest',type=Path,help='Prior source manifest (format 2) to verify before building')
     args=parser.parse_args()
@@ -25,6 +26,10 @@ def main():
         protected=[source,config,args.resource_compiler,args.lexicon_builder,args.bundle_decoder];models=None
         if args.model_dir:
             models=require_files(args.model_dir,('correction_pinyin_model.dat','char_lm.dat'));protected.append(models)
+        character_info=None
+        if args.character_model:
+            character_info=character_model_info(args.character_model)
+            protected.append(args.character_model)
         if args.source_manifest:
             from runtime_manifest import verify
             verify(source,json.loads(args.source_manifest.read_text(encoding='utf-8')))
@@ -44,6 +49,11 @@ def main():
         run('bigram',[sys.executable,TOOLS/'index_bigram.py','--input',source/'coral_languagemodel.csv','--index',intermediate/'index_coral_lexicon.csv','--output-dir',intermediate/'bigram','--no-emoji'])
         run('lexicons',[sys.executable,TOOLS/'generate_lexicons.py','--source-dir',source,'--index',intermediate/'index_coral_lexicon.csv','--bigram',intermediate/'bigram/converted_coral_languagemodel.csv','--output-dir',root,'--resource-compiler',args.resource_compiler.resolve()])
         general=root/'data/generallexicon'
+        if character_info:
+            character_target=general/'character_model.coral'
+            shutil.copyfile(args.character_model,character_target)
+            if character_model_info(character_target)!=character_info:
+                raise ValueError('Character model changed during copying')
         if models:
             for name in ('correction_pinyin_model.dat','char_lm.dat'):shutil.copyfile(models/name,general/name)
         else:
@@ -66,6 +76,7 @@ def main():
             'source_files':source_hashes,'config_files':inventory(config),'resource_compiler_sha256':digest(args.resource_compiler),'coral_lexicon_builder_sha256':digest(args.lexicon_builder),
             'coral_bundle_decoder_sha256':digest(args.bundle_decoder),'installer_bins_match':True,
             'model_mode':'explicit-reuse' if models else 'rebuilt',
+            'character_model':character_info,
             'reused_models':{n:{'sha256':digest(models/n),'size':(models/n).stat().st_size} for n in ('correction_pinyin_model.dat','char_lm.dat')} if models else None,
             'tool_files':inventory(TOOLS,exclude=tuple(p.relative_to(TOOLS).as_posix() for p in TOOLS.rglob('*.pyc'))),'steps':steps}
         (root/'build-record.json').write_text(json.dumps(record,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')

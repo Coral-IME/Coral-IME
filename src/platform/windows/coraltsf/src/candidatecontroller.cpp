@@ -16,6 +16,9 @@ constexpr int kFetchSize = 60;
 constexpr int kPrefetchThreshold = 15;
 constexpr int kMaxCandidateCount = 600;
 constexpr UINT kCandidateLoadComplete = WM_APP + 0x35B;
+constexpr UINT_PTR kRefinementTimer = 0xCA71;
+constexpr UINT kRefinementSettleMs = 120;
+constexpr UINT kRefinementPollMs = 25;
 constexpr wchar_t kCandidateLoaderClass[] = L"CoralPinyin.CandidateLoader";
 constexpr std::size_t kClipboardPageSize = 10;
 // 与渲染器的列表行数保持一致，使 PageUp/PageDown 恰好移动一屏。
@@ -56,6 +59,7 @@ CandidateController::CandidateController()
 
 CandidateController::~CandidateController()
 {
+    cancel_refinement();
     cancel_translation_request();
 	{
 		std::lock_guard<std::mutex> lock(m_loaderMutex);
@@ -82,6 +86,17 @@ LRESULT CALLBACK CandidateController::LoaderWindowProc(
 		self->applyLoadedCandidates();
 		return 0;
 	}
+    if (message == WM_TIMER && wParam == kRefinementTimer && self) {
+        ::KillTimer(window, kRefinementTimer);
+        const auto now = ::GetTickCount64();
+        // KillTimer 不会移除已排队的旧 WM_TIMER；以当前输入的真实截止值再次校验。
+        if (self->refinement_ && now < self->refinement_due_) {
+            ::SetTimer(window, kRefinementTimer, static_cast<UINT>(self->refinement_due_ - now), nullptr);
+            return 0;
+        }
+        self->poll_refinement();
+        return 0;
+    }
 	return ::DefWindowProcW(window, message, wParam, lParam);
 }
 
@@ -120,8 +135,19 @@ void CandidateController::loaderMain()
         }
 		LoadResult result;
 		result.version = request.version;
-		if (request.source)
-			result.status = request.source->query(request.query, result.snapshot);
+        result.kind = request.kind;
+        result.refinement_epoch = request.refinement_epoch;
+        try {
+            if (request.source) {
+                if (request.kind == LoadRequest::Kind::kCancelRefinement) {
+                    request.source->cancel_refinement(request.query);
+                    continue;
+                }
+                result.status = request.kind == LoadRequest::Kind::kRefinement
+                    ? request.source->refine(request.query, result.snapshot)
+                    : request.source->query(request.query, result.snapshot);
+            }
+        } catch (...) { result.status = E_FAIL; }
 		{
 			std::lock_guard<std::mutex> lock(m_loaderMutex);
 			if (m_stopLoader) return;
@@ -144,6 +170,44 @@ void CandidateController::applyLoadedCandidates()
 	for (auto& result : results)
 	{
 		if (result.version != m_version) continue;
+        if (result.kind == LoadRequest::Kind::kRefinement) {
+            if (!refinement_ || result.refinement_epoch != refinement_epoch_) continue;
+            refinement_polling_ = false;
+            if (refinement_window_ != ::GetForegroundWindow() || is_translation_mode() ||
+                m_clipboardMode || m_compositionEditing || m_candidates.expanded() ||
+                m_candidates.selectedIndex() != 0 || m_unfinished.IsEmpty()) {
+                cancel_refinement(); continue;
+            }
+            if (result.status != S_OK) { cancel_refinement(); continue; }
+            if (result.snapshot.refinement_pending) {
+                schedule_refinement(kRefinementPollMs);
+                continue;
+            }
+            if (result.snapshot.words.empty() || result.snapshot.words.size() != result.snapshot.pinyins.size()) {
+                cancel_refinement(); continue;
+            }
+            // 队列中已到达的按键或点击优先，绝不在用户准备提交时偷偷换位。
+            if (HIWORD(::GetQueueStatus(QS_KEY | QS_MOUSEBUTTON)) & (QS_KEY | QS_MOUSEBUTTON)) {
+                cancel_refinement(); continue;
+            }
+            const auto before = getPinyinHolder();
+            cancel_refinement(false);
+            std::vector<coral::tsf::CandidateStateItem> refined;
+            for (size_t i = 0; i < result.snapshot.words.size(); ++i)
+                refined.push_back(CandidateItem(((m_version + 1) << 32) | (i + 1), result.snapshot, i));
+            const bool unchanged = m_candidates.size() == refined.size() && m_candidates.hasMore() == result.snapshot.has_more &&
+                std::equal(refined.begin(), refined.end(), m_candidates.items().begin(), [](const auto& left, const auto& right) {
+                    return left.text == right.text && left.pinyin == right.pinyin && left.word() == right.word();
+                });
+            if (unchanged) continue;
+            ++m_version;
+            m_candidates.beginComposition(m_version);
+            m_isLoading = false;
+            m_candidates.replace(std::move(refined), result.snapshot.has_more);
+            m_visualRowStarts.clear(); m_itemCenters.clear();
+            publishCandidates(); refreshSegmentation(before);
+            continue;
+        }
 		std::vector<coral::tsf::CandidateStateItem> items;
 		const std::size_t count = std::min(
 			result.snapshot.words.size(), result.snapshot.pinyins.size());
@@ -156,14 +220,59 @@ void CandidateController::applyLoadedCandidates()
 		m_visualRowStarts.clear();
 		m_itemCenters.clear();
 		publishCandidates();
+		m_isLoading = false;
 	}
-	m_isLoading = false;
+}
+
+void CandidateController::cancel_refinement(bool remote)
+{
+    const auto previous = std::move(refinement_);
+    refinement_.reset();
+    const bool started = refinement_started_;
+    refinement_started_ = false; refinement_polling_ = false;
+    refinement_due_ = 0;
+    ++refinement_epoch_;
+    if (m_loaderWindow) ::KillTimer(m_loaderWindow, kRefinementTimer);
+    std::lock_guard<std::mutex> lock(m_loaderMutex);
+    if (m_pendingLoad && m_pendingLoad->kind == LoadRequest::Kind::kRefinement) m_pendingLoad.reset();
+    if (remote && previous && started && !m_stopLoader) {
+        auto cancel = *previous;
+        cancel.kind = LoadRequest::Kind::kCancelRefinement;
+        m_pendingLoad = std::move(cancel);
+        m_loaderWake.notify_one();
+    }
+}
+
+void CandidateController::poll_refinement()
+{
+    if (!refinement_ || refinement_polling_) return;
+    if (refinement_window_ != ::GetForegroundWindow() || m_unfinished.IsEmpty() ||
+        m_compositionEditing || m_candidates.expanded() || m_candidates.selectedIndex() != 0) {
+        cancel_refinement(); return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_loaderMutex);
+        if (m_pendingLoad || m_stopLoader) {
+            if (!m_stopLoader) schedule_refinement(kRefinementPollMs);
+            return;
+        }
+        m_pendingLoad = *refinement_;
+        refinement_polling_ = true; refinement_started_ = true;
+    }
+    m_loaderWake.notify_one();
+}
+
+void CandidateController::schedule_refinement(UINT delay_ms)
+{
+    refinement_due_ = ::GetTickCount64() + delay_ms;
+    if (m_loaderWindow) ::SetTimer(m_loaderWindow, kRefinementTimer, delay_ms, nullptr);
 }
 
 void CandidateController::set_candidate_provider(
 	std::shared_ptr<coral::text_service::CandidateProvider> source,
 	coral::composition::SessionToken session_id, bool traditional)
 {
+    if (m_source != source || m_sessionId != session_id || m_traditional != traditional) cancel_refinement();
 	m_source = std::move(source);
 	m_sessionId = session_id;
 	m_traditional = traditional;
@@ -174,6 +283,7 @@ void CandidateController::setConfigSnapshot(
 {
 	if (m_config && config && m_config->revision == config->revision)
 		return;
+    cancel_refinement();
     const bool key_changed = m_config && config &&
         (m_config->translation_key_configured != config->translation_key_configured ||
          m_config->translation_credential_revision != config->translation_credential_revision ||
@@ -457,6 +567,7 @@ bool CandidateController::removeNextLetter()
 
 void CandidateController::moveCursorHome()
 {
+    cancel_refinement();
 	m_compositionEditing = true;
 	m_cursor = 0;
 	if (m_sink)
@@ -465,6 +576,7 @@ void CandidateController::moveCursorHome()
 
 void CandidateController::moveCursorEnd()
 {
+    cancel_refinement();
 	m_compositionEditing = true;
 	m_cursor = m_unfinished.GetLength();
 	if (m_sink)
@@ -479,6 +591,7 @@ void CandidateController::refreshSegmentation(const CString& before)
 
 void CandidateController::nextCol()
 {
+    cancel_refinement();
 	const CString before = getPinyinHolder();
 	moveNextCol();
 	refreshSegmentation(before);
@@ -486,6 +599,7 @@ void CandidateController::nextCol()
 
 void CandidateController::prevCol()
 {
+    cancel_refinement();
 	const CString before = getPinyinHolder();
 	movePrevCol();
 	refreshSegmentation(before);
@@ -493,6 +607,7 @@ void CandidateController::prevCol()
 
 bool CandidateController::nextRow()
 {
+    cancel_refinement();
 	const CString before = getPinyinHolder();
 	const bool moved = moveNextRow();
 	refreshSegmentation(before);
@@ -501,6 +616,7 @@ bool CandidateController::nextRow()
 
 bool CandidateController::prevRow(const bool& toFirst)
 {
+    cancel_refinement();
 	const CString before = getPinyinHolder();
 	const bool handled = movePrevRow(toFirst);
 	refreshSegmentation(before);
@@ -638,6 +754,7 @@ bool CandidateController::movePrevRow(bool toFirst)
 
 void CandidateController::enterCandidateExpand()
 {
+    cancel_refinement();
 	m_candidates.expand();
 	notifyPresentation();
 	prefetchCandidates(true);
@@ -683,6 +800,7 @@ int CandidateController::selectCurrentCandidate(CString& text)
 
 int CandidateController::selectCandidateByIndex(CString& text, int index)
 {
+    cancel_refinement();
 	if (index < 0)
 		return 0;
 	const auto* candidate = m_candidates.item(static_cast<std::size_t>(index));
@@ -829,9 +947,11 @@ void CandidateController::notifyComposition()
 
 void CandidateController::queryCandidates()
 {
+    cancel_refinement();
     if (prediction_window_ != ::GetForegroundWindow()) resetConditionWord();
 	coral::input_timing::Scope timing(L"tsf.query_candidates", m_version + 1);
 	++m_version;
+    m_isLoading = false;
 	m_candidates.beginComposition(m_version);
 	m_visualRowStarts.clear();
 	m_itemCenters.clear();
@@ -839,6 +959,7 @@ void CandidateController::queryCandidates()
 	m_status = STATUS::INPUT_STATUS;
 	std::vector<coral::tsf::CandidateStateItem> items;
 	bool hasMore = false;
+    std::optional<LoadRequest> refinement;
     m_specialMatch = false;
     m_queryUnavailable = false;
 	if (m_source && m_sessionId && !withoutSeparators(m_unfinished).IsEmpty() &&
@@ -862,6 +983,13 @@ void CandidateController::queryCandidates()
 		m_queryUnavailable = FAILED(queryHr);
 		if (SUCCEEDED(queryHr))
 		{
+            if (snapshot.refinement_pending && m_inputMode == InputMode::IM_Normal) {
+                LoadRequest request;
+                request.kind = LoadRequest::Kind::kRefinement;
+                request.version = m_version; request.refinement_epoch = refinement_epoch_;
+                request.query = query; request.source = m_source;
+                refinement = std::move(request);
+            }
 			hasMore = snapshot.has_more;
 			const std::size_t count = std::min(snapshot.words.size(), snapshot.pinyins.size());
 			items.reserve(count);
@@ -881,6 +1009,11 @@ void CandidateController::queryCandidates()
 		items.push_back({ (m_version << 32) | (items.size() + 1), L"剪贴板", std::wstring() });
 	}
 	m_candidates.replace(std::move(items), hasMore);
+    if (refinement && m_loaderWindow) {
+        refinement_ = std::move(refinement);
+        refinement_window_ = ::GetForegroundWindow();
+        schedule_refinement(kRefinementSettleMs);
+    }
 	const auto publishStart = coral::input_timing::nowUs();
 	publishCandidates();
 	coral::input_timing::mark(L"tsf.publish_candidates", publishStart, m_version);
@@ -903,6 +1036,7 @@ void CandidateController::prefetchCandidates(bool force)
 	const std::size_t remaining = m_candidates.size() > m_candidates.selectedIndex()
 		? m_candidates.size() - m_candidates.selectedIndex() - 1 : 0;
 	if (!force && remaining > kPrefetchThreshold) return;
+    cancel_refinement();
 	m_isLoading = true;
 	LoadRequest request;
 	request.version = m_version;
@@ -926,6 +1060,7 @@ void CandidateController::prefetchCandidates(bool force)
 
 void CandidateController::Reset()
 {
+    cancel_refinement();
     cancel_translation_request();
     translation_.reset();
     original_candidates_.reset();
@@ -962,6 +1097,7 @@ std::string CandidateController::prediction_condition() const
 
 void CandidateController::resetConditionWord()
 {
+    cancel_refinement();
 	m_condition.Empty();
 }
 
@@ -984,6 +1120,7 @@ void CandidateController::adjustTodayWord(int offset)
 bool CandidateController::applyCandidateActionByIndex(
 	int index, coral::CandidateAction action)
 {
+    cancel_refinement();
 	if (index < 0 || !m_source || !m_sessionId || m_clipboardMode || is_translation_mode() || index == m_clipboardEntryIndex)
 		return false;
 	const auto* candidate = m_candidates.item(static_cast<std::size_t>(index));
@@ -1026,6 +1163,7 @@ bool CandidateController::clipboardEntryAvailable() const
 // 历史文件由常驻进程 coralpinyin.exe 维护，这里每次进入时读取最新内容。
 void CandidateController::enterClipboardMode()
 {
+    cancel_refinement();
 	const auto now = static_cast<std::int64_t>(std::time(nullptr));
 	auto entries = coral::clipboard::Load(
 		coral::clipboard::HistoryPath(hlp::getLocalLowCoralPinyinPath()), now);
@@ -1110,6 +1248,7 @@ int CandidateController::clipboardScreenRows()
 
 bool CandidateController::begin_translation()
 {
+    cancel_refinement();
     if (!m_config || !m_config->translation_enabled || is_translation_mode() ||
         m_clipboardMode || m_inputMode != InputMode::IM_Normal || m_rawInput.IsEmpty()) return false;
     const auto* candidate = m_candidates.item(m_candidates.selectedIndex());

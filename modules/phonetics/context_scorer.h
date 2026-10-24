@@ -45,12 +45,15 @@ public:
 #if CORAL_ENABLE_CHARACTER_MODEL
     void configure_character_model(const std::filesystem::path& default_path, bool enabled = true);
     const coral::language_model::CharacterModel* character_model() const {
-        return character_model_.valid() ? &character_model_ : nullptr;
+        return character_model_.get();
     }
+    std::shared_ptr<const coral::language_model::CharacterModel> shared_character_model() const { return character_model_; }
     double character_weight() const { return character_weight_; }
     bool load_character_model(const filesystem::path& path, double weight, std::string& error) {
         if (!std::isfinite(weight) || weight < 0 || weight > 8) return false;
-        if (!character_model_.load_file(path, error)) return false;
+        auto model = std::make_shared<coral::language_model::CharacterModel>();
+        if (!model->load_file(path, error)) return false;
+        character_model_ = std::move(model);
         character_weight_ = weight; return true;
     }
 #endif
@@ -59,7 +62,7 @@ private:
 	coral::storage::BigramMappedView gbin_view_;
     coral::language_model::SurfaceModel surface_model_;
 #if CORAL_ENABLE_CHARACTER_MODEL
-    coral::language_model::CharacterModel character_model_;
+    std::shared_ptr<const coral::language_model::CharacterModel> character_model_;
     double character_weight_ = 0;
 #endif
 };

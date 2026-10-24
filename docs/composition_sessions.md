@@ -1,8 +1,10 @@
 # 会话端口与状态机
 
-第五批 B1 将会话契约放在 `coral::composition`，SessionPort/SessionResult/SessionSettings/SessionToken 替代历史端口名称。公开入口是 `include/coral/composition/session_port.h`；函数、会话字段及按键/状态枚举按开发准则命名，枚举线值保留。CSW4 和 renderer 的既有字节布局未修改，协议仍为版本 4。
+第五批 B1 将会话契约放在 `coral::composition`，SessionPort/SessionResult/SessionSettings/SessionToken 替代历史端口名称。公开入口是 `include/coral/composition/session_port.h`；函数、会话字段及按键/状态枚举按开发准则命名，枚举线值保留。当前 CSW4 为版本 6，详见 [协议](session_wire.md)；renderer 的字节布局不受两阶段候选变更影响。
 
 ## 职责
+
+`query_page` 在真实本地适配器中先返回基础候选，并以 `SessionResult.value=1` 告知可选优化。`refine_candidates` 以基础查询的传输编号为条件，首次调用启动独立评分，后续短轮询以 value=1/2/0 表示待完成/完整候选/无更新。取消只影响同编号的任务。新查询、重置、关闭与配置变化使该会话任务失效，学习或词库规则更新使本端口全部任务失效。未知端口的默认优化实现返回无更新，不回退到同步推理。一般 `send_key` 继续返回即时基础结果；当前产品通过 `query_page` 使用第二阶段。
 
 `coral::composition` 静态 target 只编译状态机，依赖公开类型和标准库。CompositionSession 接收共享所有权的 CandidateSource；该接口提供候选查询与学习记录。人工查询源可以独立验证会话，无需 Windows、词典、注册表或共享设置。
 

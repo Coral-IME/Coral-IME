@@ -119,6 +119,14 @@ public:
 		return call(request);
 	}
 
+    composition::SessionResult refine_candidates(composition::SessionToken session_id,
+        std::uint64_t request_id, std::uint64_t query_request_id, bool cancel) override
+    {
+        auto request = make_request(cancel ? SessionOperation::kCancelRefinement : SessionOperation::kRefineCandidates,
+            request_id, session_id);
+        request.query_request_id = query_request_id;
+        return call(request);
+    }
 	composition::SessionResult select_candidate(
 		composition::SessionToken session_id, std::uint64_t request_id, int indexInPage) override
 	{

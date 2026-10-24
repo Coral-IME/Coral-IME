@@ -2,6 +2,7 @@
 #define CORAL_INCLUDE_CORAL_LANGUAGE_MODEL_CHARACTER_MODEL_H_INCLUDED
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -22,7 +23,7 @@ public:
     bool valid() const noexcept;
     // 不支持的候选返回 NaN；资源预算失败返回 false，调用方保留原排序。
     bool score_candidates(std::string_view context, const std::vector<std::string_view>& texts,
-        std::vector<double>& scores) const;
+        std::vector<double>& scores, const std::function<bool()>& cancelled = {}) const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

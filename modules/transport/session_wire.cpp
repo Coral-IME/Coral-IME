@@ -86,7 +86,7 @@ struct Envelope
 bool known_operation(SessionOperation operation)
 {
     const auto value = static_cast<std::uint16_t>(operation);
-    return value >= 1 && value <= 16;
+    return value >= 1 && value <= 18;
 }
 bool valid_request(const SessionRequest& request)
 {
@@ -109,6 +109,9 @@ bool valid_request(const SessionRequest& request)
             request.config.fuzzy_choices.size() <= kMaxFuzzyChoices;
     case SessionOperation::kCancel:
         return request.cancel_request_id != 0;
+    case SessionOperation::kRefineCandidates:
+    case SessionOperation::kCancelRefinement:
+        return request.query_request_id != 0;
     default: return true;
     }
 }
@@ -141,6 +144,8 @@ bool write_request_body(const SessionRequest& request, ByteSink& sink)
         return true;
     }
     case SessionOperation::kCancel: return sink.integer(request.cancel_request_id);
+    case SessionOperation::kRefineCandidates:
+    case SessionOperation::kCancelRefinement: return sink.integer(request.query_request_id);
     default: return true;
     }
 }
@@ -183,6 +188,8 @@ bool read_request_body(SessionRequest& request, ByteCursor& cursor)
         return true;
     }
     case SessionOperation::kCancel: return cursor.integer(request.cancel_request_id);
+    case SessionOperation::kRefineCandidates:
+    case SessionOperation::kCancelRefinement: return cursor.integer(request.query_request_id);
     default: return true;
     }
 }

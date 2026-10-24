@@ -19,7 +19,7 @@ coral::phonetics::ContextScorer::~ContextScorer() = default;
 #if CORAL_ENABLE_CHARACTER_MODEL
 void coral::phonetics::ContextScorer::configure_character_model(const std::filesystem::path& default_path, bool enabled)
 {
-    character_model_ = coral::language_model::CharacterModel{};
+    character_model_.reset();
     character_weight_ = 0;
     if (!enabled) return;
 #if defined(_WIN32)
