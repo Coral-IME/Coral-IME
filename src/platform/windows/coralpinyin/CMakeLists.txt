@@ -45,9 +45,9 @@ target_include_directories(coralpinyin PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../common/nanet/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../../../lib/opencc/deps/rapidjson-1.1.0
 )
-# 程序版本：可通过 -DCORAL_APP_VERSION=x.y.z.w 覆盖，默认 1.0.0.3
+# 程序版本：可通过 -DCORAL_APP_VERSION=x.y.z.w 覆盖，默认 1.0.0.5
 if(NOT DEFINED CORAL_APP_VERSION)
-    set(CORAL_APP_VERSION "1.0.0.3")
+    set(CORAL_APP_VERSION "1.0.0.5")
 endif()
 if(NOT CORAL_APP_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$")
     message(FATAL_ERROR "CORAL_APP_VERSION must be four numeric components: ${CORAL_APP_VERSION}")

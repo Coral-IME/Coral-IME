@@ -1,10 +1,16 @@
 {
   "format_version": 1,
   "repository": "Coral-IME/Coral-IME-data",
-  "revision": "3a62573696a7a9b9bf029c196c99bc4e95f8904e",
-  "data_version": "official-20261022.1",
+  "revision": "931cfead9455085c6cd2efe7c62417ac44e168c6",
+  "data_version": "official-20261025.1",
   "archive": "official-inputs.zip",
-  "archive_sha256": "add50b5b6deee1ff1f126d85bf4ad5eca321fe1a7ca504eb72c21bf22fb269d2",
-  "manifest_sha256": "3f448b56d6fad63cfdb02c2b410b1e4aeb59206d0827c922c9f0a766e2f08563",
-  "model_mode": "explicit-reuse"
+  "archive_sha256": "28c7d2b65de7525b53b91003859693f7a52002c8506e1adfdc41ca0799d9dc52",
+  "manifest_sha256": "fad2d0754f8db8f4832daf45d7b15c0e5584fb9c00037f4dc5802b16844d9f95",
+  "model_mode": "explicit-reuse",
+  "character_model": {
+    "path": "models/character_model.coral",
+    "size": 4430160,
+    "sha256": "b202ab7a3fe603bad2ad4d46e85dc978e8234844b6809c288f276a4ff9ae7bab",
+    "precision": "int8"
+  }
 }

@@ -8,7 +8,7 @@ import unittest
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tools/release'))
 sys.path.insert(0,str(ROOT/'tests/language_model'))
-from package_windows import package_character_model
+from package_windows import package_character_model,stamp_package_version
 from runtime_manifest import character_model_info
 from test_character_model import fixture
 from character_model_format import quantize_model
@@ -59,6 +59,19 @@ class CharacterPackageTest(unittest.TestCase):
             self.model.write_bytes(data)
             with self.subTest(size=len(data)),self.assertRaises(ValueError):
                 character_model_info(self.model)
+
+    def test_package_version_is_stamped_without_changing_other_sections(self):
+        path=self.root/'config.ini'
+        path.write_bytes(b'[app]\r\nVersion = 0.0.0.0\r\n[other]\r\nVersion = keep\r\n')
+        stamp_package_version(path,'1.0.0.5')
+        self.assertEqual(path.read_bytes(),b'[app]\r\nVersion = 1.0.0.5\r\n[other]\r\nVersion = keep\r\n')
+
+    def test_missing_or_duplicate_version_does_not_change_file(self):
+        path=self.root/'config.ini'
+        for raw in (b'[app]\nOther=0\n',b'[app]\nVersion=0\nVersion=1\n'):
+            path.write_bytes(raw)
+            with self.assertRaises(ValueError):stamp_package_version(path,'1.0.0.5')
+            self.assertEqual(path.read_bytes(),raw)
 
 if __name__=='__main__':
     unittest.main()

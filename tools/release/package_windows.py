@@ -14,6 +14,20 @@ OWNED=tuple(IDENTITY[key] for key in ('settings_exe','update_exe','diagnostic_ex
 GENERATORS=('coral_lexicon_builder.exe','coral_bundle_decoder.exe')
 BUILD_TOOLS=('coral_resource_compiler.exe',)
 
+def stamp_package_version(path,version):
+    # 运行模板使用 0.0.0.0；发行副本必须写入真实版本，供关于页和更新检查一致读取。
+    with Path(path).open('r',encoding='utf-8',newline='') as stream:lines=stream.readlines()
+    section='';changed=0;output=[]
+    for line in lines:
+        header=re.match(r'\s*\[([^\]]+)\]',line)
+        if header:section=header[1].lower()
+        if section=='app' and re.match(r'\s*Version\s*=',line,re.IGNORECASE):
+            line=re.sub(r'^(\s*Version\s*=\s*)[^\r\n]*',lambda match:match[1]+version,line,flags=re.IGNORECASE)
+            changed+=1
+        output.append(line)
+    if changed!=1:raise ValueError('Package configuration requires one app/Version')
+    with Path(path).open('w',encoding='utf-8',newline='') as stream:stream.writelines(output)
+
 LEGAL_DOCUMENTS=('用户协议.md','隐私政策.md','许可说明.md')
 
 def stage_legal_documents(package):
@@ -97,6 +111,7 @@ def main():
         shutil.copyfile(CODE_ROOT/'resources/icons/coral_logo.ico',res/'coral_logo.ico')
         shutil.copytree(CODE_ROOT/'src/platform/windows/renderer/skins',res/'skins')
         (package/'config').mkdir();shutil.copyfile(runtime/'config/coralpinyinConfig.ini',package/'config/coralpinyinConfig.ini')
+        stamp_package_version(package/'config/coralpinyinConfig.ini',args.version)
         data=package/'data';general=data/'generallexicon';general.mkdir(parents=True)
         for name in ('bushou.marisa','bushou.dat','stroke.marisa','stroke.dat','dw.coral'):shutil.copyfile(runtime/'data'/name,data/name)
         for name in ('english.dat','english.marisa','correction_pinyin_model.dat','char_lm.dat'):shutil.copyfile(runtime/'data/generallexicon'/name,general/name)

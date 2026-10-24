@@ -6,13 +6,25 @@ on:
       version:
         description: '四段程序版本；生成含正式词库的未签名测试包'
         type: string
-        default: '1.0.0.4'
+        default: '1.0.0.5'
         required: true
       create_draft:
         description: '成功后创建测试版 Release 草稿'
         type: boolean
         default: true
         required: true
+      publish_release:
+        description: '检查通过后公开发布到 GitHub Latest（否则仅草稿）'
+        type: boolean
+        default: false
+      sync_website:
+        description: '公开发布后同步官网安装包与客户端更新服务'
+        type: boolean
+        default: true
+      release_description:
+        description: '官网及客户端显示的简短更新说明'
+        type: string
+        default: '新增本地 GPT-2 智能候选；采用 INT8 小模型，输入停顿后优化长候选，降低模型体积和内存占用。'
 
 permissions:
   contents: read
@@ -36,6 +48,7 @@ jobs:
     uses: ./.github/workflows/windows-build.yml
     with:
       version: ${{ inputs.version }}
+      enable_updates: true
 
   package:
     name: Build and verify official runtime
@@ -63,6 +76,7 @@ jobs:
           "repository=$($lock.repository)" >> $env:GITHUB_OUTPUT
           "revision=$($lock.revision)" >> $env:GITHUB_OUTPUT
           "version=$($lock.data_version)" >> $env:GITHUB_OUTPUT
+          if (-not $lock.character_model -or $lock.character_model.precision -ne 'int8') { throw 'A pinned INT8 character model is required.' }
       - name: Read private release inputs
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -94,11 +108,12 @@ jobs:
           --resource-compiler build/ci-x64/coralpinyin/Release/coral_resource_compiler.exe
           --lexicon-builder build/ci-x64/coralpinyin/Release/coral_lexicon_builder.exe
           --bundle-decoder build/ci-x64/coralpinyin/Release/coral_bundle_decoder.exe
+          --character-model build/official-inputs/models/character_model.coral
           --data-version "$env:DATA_VERSION" --engine-version "$env:GITHUB_SHA"
       - name: Check official input behavior
         run: >-
           python tools/release/check_official_runtime.py --binaries build/ci-x64/coralpinyin/Release
-          --runtime-dir build/official-runtime --output-dir build/official-checks
+          --runtime-dir build/official-runtime --output-dir build/official-checks --require-character-model
       - name: Find NSIS
         run: |
           $compiler = Get-Command makensis.exe -ErrorAction SilentlyContinue
@@ -110,7 +125,7 @@ jobs:
           python tools/release/package_windows.py --build-dir build/ci-x64
           --x86-tsf build/ci-x86/coralpinyin/Release/coraltsf32.dll
           --runtime-dir build/official-runtime --output-dir build/official-package
-          --version "$env:CORAL_CI_VERSION" --makensis "$env:CORAL_NSIS" --sign-mode None --manual-launch
+          --version "$env:CORAL_CI_VERSION" --makensis "$env:CORAL_NSIS" --sign-mode None --manual-launch --require-character-model
       - name: Record source and checksums
         run: >-
           python tools/release/demo_release.py bundle --edition official
@@ -119,6 +134,7 @@ jobs:
           --version "$env:CORAL_CI_VERSION" --source-sha "$env:GITHUB_SHA"
           --repository "$env:GITHUB_REPOSITORY"
           --run-url "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          --automatic-updates
       - name: Save official test installer
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
@@ -135,9 +151,9 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  draft:
-    name: Draft official data test release
-    if: inputs.create_draft && github.ref == 'refs/heads/main'
+  release:
+    name: Publish or draft official release
+    if: (inputs.create_draft || inputs.publish_release) && github.ref == 'refs/heads/main'
     needs: package
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -148,14 +164,45 @@ jobs:
         with:
           name: coral-pinyin-official-installer
           path: dist
-      - name: Create draft
+      - name: Create release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           SOURCE_SHA: ${{ github.sha }}
-          RELEASE_TAG: v${{ inputs.version }}-rc.${{ github.run_id }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
         run: |
+          release_args=(--draft --prerelease --latest=false)
+          RELEASE_TAG="v$CORAL_CI_VERSION-rc.${{ github.run_id }}"
+          if [ "$PUBLISH_RELEASE" = "true" ]; then
+            RELEASE_TAG="v$CORAL_CI_VERSION"
+            release_args=(--latest)
+          fi
           gh release create "$RELEASE_TAG" dist/*.exe dist/SHA256SUMS.txt dist/BUILD_INFO.json dist/package-manifest.json dist/RELEASE_NOTES.md \
             --target "$SOURCE_SHA" --title "珊瑚输入法 正式词库测试版 $CORAL_CI_VERSION" \
-            --notes-file dist/RELEASE_NOTES.md --draft --prerelease --latest=false
+            --notes-file dist/RELEASE_NOTES.md "${release_args[@]}"
+
+  website:
+    name: Synchronize website and updater
+    if: inputs.publish_release && inputs.sync_website && github.ref == 'refs/heads/main'
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: coral-pinyin-official-installer
+          path: dist
+      - name: Upload and publish verified package
+        env:
+          CORAL_RELEASE_API_KEY: ${{ secrets.CORAL_RELEASE_API_KEY }}
+          RELEASE_DESCRIPTION: ${{ inputs.release_description }}
+        run: >-
+          python tools/release/publish_website.py --release-dir dist
+          --version "$env:CORAL_CI_VERSION" --description "$env:RELEASE_DESCRIPTION"

@@ -7,12 +7,17 @@ from pathlib import Path, PurePosixPath
 import re
 import shutil
 import stat
+import sys
 import zipfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'data'))
+from character_model_format import inspect_model
 
 
 SOURCE_FILES = ('coral_lexicon.csv', 'coral_languagemodel.csv', 'eng_lexicon.csv',
                 'pinyin_frequency.csv', 'umode_radical.csv', 'umode_stroke.csv', 'dw.coral')
 MODEL_FILES = ('char_lm.dat', 'correction_pinyin_model.dat')
+CHARACTER_MODEL = 'models/character_model.coral'
 REQUIRED = ({'source/' + name for name in SOURCE_FILES}
             | {'models/' + name for name in MODEL_FILES}
             | {'source/opencc/' + name for name in ('s2t.json', 'symbol_word.coral', 'emoji_word.coral')})
@@ -32,7 +37,7 @@ def safe_name(name):
     if (not name or '\\' in name or ':' in name or path.is_absolute()
             or path.as_posix() != name or any(part in ('.', '..') for part in path.parts)):
         raise ValueError('Invalid input archive path')
-    if name in REQUIRED:
+    if name in REQUIRED or name == CHARACTER_MODEL:
         return
     if (len(path.parts) == 3 and path.parts[:2] == ('source', 'opencc')
             and path.suffix in ('.json', '.coral', '.ocd2', '.txt')):
@@ -56,7 +61,28 @@ def validate_manifest(manifest):
         total += entry['size']
     if total > MAX_TOTAL_BYTES:
         raise ValueError('Official inputs exceed the supported size')
+    character = manifest.get('character_model')
+    if CHARACTER_MODEL in files:
+        validate_character_record(character)
+        if {key: character[key] for key in ('size', 'sha256')} != files[CHARACTER_MODEL]:
+            raise ValueError('Character model manifest differs from file inventory')
+    elif character is not None:
+        raise ValueError('Character model is declared but missing')
     return files
+
+
+def validate_character_record(record):
+    if (not isinstance(record, dict) or record.get('path') != CHARACTER_MODEL
+            or type(record.get('size')) is not int or not 128 <= record['size'] <= 256 * 1024 * 1024
+            or not re.fullmatch(r'[0-9a-f]{64}', record.get('sha256', ''))
+            or record.get('precision') not in ('float32', 'int8')):
+        raise ValueError('Invalid character model release record')
+
+
+def character_record(path):
+    precision = 'int8' if inspect_model(path)[0] == 2 else 'float32'
+    return {'path': CHARACTER_MODEL, 'size': Path(path).stat().st_size,
+            'sha256': digest(path), 'precision': precision}
 
 
 def load_lock(path):
@@ -70,6 +96,8 @@ def load_lock(path):
             or any(not re.fullmatch(r'[0-9a-f]{64}', lock.get(key, ''))
                    for key in ('archive_sha256', 'manifest_sha256'))):
         raise ValueError('Invalid official data lock')
+    if 'character_model' in lock:
+        validate_character_record(lock['character_model'])
     return lock
 
 
@@ -88,6 +116,8 @@ def pack(input_dir, output_dir, data_version):
             files[name] = {'size': path.stat().st_size, 'sha256': digest(path)}
     manifest = {'format_version': 1, 'data_version': data_version,
                 'model_mode': 'explicit-reuse', 'files': files}
+    if (input_dir / CHARACTER_MODEL).is_file():
+        manifest['character_model'] = character_record(input_dir / CHARACTER_MODEL)
     validate_manifest(manifest)
     output_dir.mkdir(parents=True, exist_ok=False)
     archive_path = output_dir / 'official-inputs.zip'
@@ -117,6 +147,8 @@ def unpack(repository_dir, lock_path, output_dir):
     files = validate_manifest(manifest)
     if manifest['data_version'] != lock['data_version']:
         raise ValueError('Official data version differs from its lock')
+    if manifest.get('character_model') != lock.get('character_model'):
+        raise ValueError('Character model differs from its lock')
     if output_dir.is_relative_to(repository_dir) or repository_dir.is_relative_to(output_dir):
         raise ValueError('Repository and output directories must not overlap')
     with zipfile.ZipFile(archive_path) as archive:
@@ -137,6 +169,8 @@ def unpack(repository_dir, lock_path, output_dir):
                 shutil.copyfileobj(source, output, 1024 * 1024)
             if digest(target) != files[info.filename]['sha256']:
                 raise ValueError('Extracted input checksum mismatch')
+    if manifest.get('character_model') and character_record(output_dir / CHARACTER_MODEL) != manifest['character_model']:
+        raise ValueError('Extracted character model metadata mismatch')
     print('Official input checksums verified: ' + str(len(files)) + ' files, ' + lock['data_version'])
 
 

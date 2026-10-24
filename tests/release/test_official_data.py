@@ -35,6 +35,9 @@ class OfficialDataTest(unittest.TestCase):
             'manifest_sha256': DATA.digest(self.repository / 'inputs-manifest.json'),
             'model_mode': 'explicit-reuse',
         }
+        manifest = json.loads((self.repository / 'inputs-manifest.json').read_text(encoding='utf-8'))
+        if manifest.get('character_model'):
+            self.lock['character_model'] = manifest['character_model']
         self.write_lock()
 
     def write_lock(self):
@@ -157,6 +160,53 @@ class OfficialDataTest(unittest.TestCase):
                 self.bundle()
             self.manifest['runtime'][field] = original
         self.assertFalse((self.root / 'release').exists())
+
+    def test_character_weights_are_locked_and_preserved(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'language_model'))
+        from test_character_model import fixture
+        from character_model_format import quantize_model
+        source = self.root / 'float.coral'
+        source.write_bytes(fixture())
+        quantize_model(source, self.inputs / DATA.CHARACTER_MODEL)
+        self.prepare()
+        self.assertEqual(self.lock['character_model']['precision'], 'int8')
+        DATA.unpack(self.repository, self.lock_path, self.output)
+        self.assertEqual((self.inputs / DATA.CHARACTER_MODEL).read_bytes(), (self.output / DATA.CHARACTER_MODEL).read_bytes())
+        self.lock['character_model']['sha256'] = '0' * 64
+        self.write_lock()
+        with self.assertRaisesRegex(ValueError, 'Character model differs'):
+            DATA.unpack(self.repository, self.lock_path, self.root / 'bad-extracted')
+
+    def prepare_neural_release(self):
+        self.prepare_release()
+        character = {'path': DATA.CHARACTER_MODEL, 'size': 256, 'sha256': '1' * 64, 'precision': 'int8'}
+        self.lock['character_model'] = character
+        self.write_lock()
+        self.manifest['character_model'] = {key: character[key] for key in ('size', 'sha256')}
+        self.summary['character_model'] = character
+        self.summary['tests'].append({'name': 'character_model_test', 'passed': True, 'exit_code': 0})
+        self.write_release()
+
+    def test_neural_release_requires_model_and_native_score_check(self):
+        self.prepare_neural_release()
+        self.manifest['character_model']['sha256'] = '0' * 64
+        self.write_release()
+        with self.assertRaisesRegex(ValueError, 'character model differs'):
+            self.bundle()
+        self.manifest['character_model']['sha256'] = '1' * 64
+        self.summary['tests'].pop()
+        self.write_release()
+        with self.assertRaisesRegex(ValueError, 'all pass'):
+            self.bundle()
+
+    def test_neural_release_records_enabled_updates_and_model_hash(self):
+        self.prepare_neural_release()
+        RELEASE.bundle(self.package, self.root / 'release', '1.0.0.4', 'a' * 40,
+                       'example/source', 'https://github.com/example/source/actions/runs/123',
+                       edition='official', data_lock=self.lock_path, test_summary=self.summary_path, automatic_updates=True)
+        info = json.loads((self.root / 'release/BUILD_INFO.json').read_text(encoding='utf-8'))
+        self.assertTrue(info['automatic_updates'])
+        self.assertEqual(info['character_model'], self.lock['character_model'])
 
 
 if __name__ == '__main__':

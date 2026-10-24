@@ -25,7 +25,7 @@ def digest(path):
 
 
 def bundle(package_dir, output_dir, version, source_sha, repository, run_url,
-           edition='demo', data_lock=None, test_summary=None):
+           edition='demo', data_lock=None, test_summary=None, automatic_updates=False):
     app_version(version)
     if not re.fullmatch(r'[0-9a-f]{40}', source_sha):
         raise ValueError('A full source commit SHA is required')
@@ -37,6 +37,8 @@ def bundle(package_dir, output_dir, version, source_sha, repository, run_url,
     manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
     if edition not in ('demo', 'official'):
         raise ValueError('Unknown release edition')
+    if automatic_updates and edition != 'official':
+        raise ValueError('Demo releases cannot enable automatic updates')
     expected_edition = 'demo' if edition == 'demo' else 'standard'
     if (manifest.get('complete') is not True or manifest.get('installer_compiled') is not True
             or manifest.get('version') != version or manifest.get('sign_mode') != 'None'
@@ -49,6 +51,10 @@ def bundle(package_dir, output_dir, version, source_sha, repository, run_url,
             raise ValueError('Official release requires locked data and formal-data test results')
         from official_data import load_lock
         lock = load_lock(data_lock)
+        if lock.get('character_model'):
+            expected = {key: lock['character_model'][key] for key in ('size', 'sha256')}
+            if manifest.get('character_model') != expected:
+                raise ValueError('Package character model differs from the locked release model')
         runtime = manifest.get('runtime', {})
         if (runtime.get('engine_version') != source_sha
                 or runtime.get('data_version') != lock['data_version']
@@ -58,11 +64,15 @@ def bundle(package_dir, output_dir, version, source_sha, repository, run_url,
             raise ValueError('Package runtime differs from the requested official data and source')
         summary = json.loads(Path(test_summary).read_text(encoding='utf-8'))
         expected_tests = {'sequence_test', 'lexicon_import_engine_test', 'uvmode_engine_test', 'config_gate_test'}
+        if lock.get('character_model'):
+            expected_tests.add('character_model_test')
+            if summary.get('character_model') != lock['character_model']:
+                raise ValueError('Formal-data character model differs from its lock')
         tests = summary.get('tests', [])
         if (summary.get('format_version') != 1 or summary.get('passed') is not True
                 or not re.fullmatch(r'[0-9a-f]{64}', summary.get('runtime_manifest_sha256', ''))
                 or summary['runtime_manifest_sha256'] != manifest.get('runtime_manifest_sha256')
-                or len(tests) != 4 or {item.get('name') for item in tests} != expected_tests
+                or len(tests) != len(expected_tests) or {item.get('name') for item in tests} != expected_tests
                 or any(item.get('passed') is not True or item.get('exit_code') != 0 for item in tests)):
             raise ValueError('Formal-data checks must all pass before release')
     installer = package_dir / ('coralpinyin-window-x64-' + version + '.exe')
@@ -86,12 +96,14 @@ def bundle(package_dir, output_dir, version, source_sha, repository, run_url,
         'data': ('self-authored public demo fixtures; not the official dictionary or model'
                  if edition == 'demo' else lock),
         'signed': False,
-        'automatic_updates': False,
+        'automatic_updates': automatic_updates,
         'installation_verified': False,
         'installer': {'name': installer_name, 'sha256': installer_hash},
     }
     if summary is not None:
         record['formal_data_tests'] = summary
+        if lock.get('character_model'):
+            record['character_model'] = lock['character_model']
     (output_dir / 'BUILD_INFO.json').write_text(
         json.dumps(record, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     if edition == 'demo':
@@ -118,6 +130,11 @@ def bundle(package_dir, output_dir, version, source_sha, repository, run_url,
 - 沿用产品安装位置和标识，请在独立虚拟机验收。
 
 '''
+        if automatic_updates:
+            notes = notes.replace('自动更新在编译时关闭', '官网 HTTPS 更新检查已启用，可在关于页关闭')
+        if lock.get('character_model'):
+            model = lock['character_model']
+            notes += f"本包随附本地 GPT-2 字符模型：{model['precision']}，{model['size']:,} 字节，SHA-256 `{model['sha256']}`。长候选在输入停顿后参与重排，模型推理在本机完成。\n\n"
     notes += f'''程序版本：{version}
 对应源码：https://github.com/{repository}/commit/{source_sha}
 构建与测试记录：{run_url}
@@ -148,11 +165,12 @@ def main():
     prepare.add_argument('--edition', choices=('demo', 'official'), default='demo')
     prepare.add_argument('--data-lock', type=Path)
     prepare.add_argument('--test-summary', type=Path)
+    prepare.add_argument('--automatic-updates', action='store_true')
     args = parser.parse_args()
     try:
         if args.command == 'bundle':
             bundle(args.package_dir, args.output_dir, args.version, args.source_sha,
-                   args.repository, args.run_url, args.edition, args.data_lock, args.test_summary)
+                   args.repository, args.run_url, args.edition, args.data_lock, args.test_summary, args.automatic_updates)
         else:
             print('Valid demo version: ' + args.version)
     except (ValueError, OSError) as error:
