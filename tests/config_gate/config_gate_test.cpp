@@ -20,6 +20,7 @@
 #include "core_operations.h"
 #include "shared_preferences.h"
 #include "preference_registry.h"
+#include "runtime_context.h"
 
 namespace fs = std::filesystem;
 
@@ -57,12 +58,18 @@ bool SetupScratch(const fs::path& dataDir, fs::path& scratch) {
 	std::error_code ec;
 	fs::remove_all(scratch, ec);
 	fs::create_directories(scratch / "config", ec);
-	if (ec) return false;
+	if (ec) {
+        std::cerr << "cannot create isolated config directory: " << ec.message() << "\n";
+        return false;
+    }
 	// 引擎从 coralDir/config/coralpinyinConfig.ini 读配置，用户词典也落在 coralDir
 	fs::copy_file(dataDir / "config" / "coralpinyinConfig.ini",
 		scratch / "config" / "coralpinyinConfig.ini",
 		fs::copy_options::overwrite_existing, ec);
-	if (ec) return false;
+	if (ec) {
+        std::cerr << "cannot copy isolated config template: " << ec.message() << "\n";
+        return false;
+    }
 	// 系统词库目录通过环境变量选择传入的运行资源目录
 	std::string dir = dataDir.string();
 	_putenv_s("CORAL_LANGENGINE_DATA_DIR", dir.c_str());
@@ -87,10 +94,15 @@ int main(int argc, char** argv) {
 		Finish(3);
 	}
 
-	// --- 1. 基线：fuzzy_choices 全关（INI 默认）时 "zongguo" 的解析输出 ---
-	// （zong 是合法音节，无 z→zh 模糊时不会出现 zhongguo 对应的候选）
-	const std::string baseline = ParseToString("zongguo");
+    // 单独验证模糊音同步，避免自动纠错提前把 zua 改成 zhua。
+    sConfig->setPinyinCorrection(false);
+    Check(!sConfig->getPinyinCorrection(), "automatic correction is disabled for fuzzy isolation");
+
+	// --- 1. 基线：fuzzy_choices 全关（INI 默认）时 "zua" 的解析输出 ---
+	// zua 没有完整词条命中；避免 zongguo 的精确词条抑制模糊候选。
+	const std::string baseline = ParseToString("zua");
 	Check(!baseline.empty(), "baseline parse produces output");
+    Check(baseline.find("抓") == std::string::npos, "baseline excludes fuzzy zhua candidate");
 	std::cout << "[DBG] baseline  = " << baseline << "\n";
 
 	{
@@ -107,26 +119,28 @@ int main(int argc, char** argv) {
         writer.setConfig("smartPrediction", "true");
         ParseToString("nihao");
         Check(sConfig->get_smart_prediction(), "prediction enable is synchronized");
-		Check(ParseToString("zongguo") == baseline, "baseline is restored before fuzzy toggle");
+		Check(ParseToString("zua") == baseline, "baseline is restored before fuzzy toggle");
 		writer.setConfig("fuzzyChoice", "1000000000000000000");
 
 		// --- 3. 下一次解析入口即生效（门闸放行 → 快照重建 → buildFuzzyMap 读新快照） ---
-		const std::string fuzzyOn = ParseToString("zongguo");
+		const std::string fuzzyOn = ParseToString("zua");
+        Check(sConfig->getFuzzyChoice().at(0) == 1, "fuzzy setting reaches preferences");
+        Check(coral::Engine::compatInstance().config().fuzzy_choices().at(0) == 1, "fuzzy setting reaches engine snapshot");
 		std::cout << "[DBG] fuzzyOn   = " << fuzzyOn << "\n";
 		Check(fuzzyOn != baseline, "cross-process write takes effect on next parse");
-		Check(fuzzyOn.find("中国") != std::string::npos, "fuzzy z->zh surfaces zhongguo candidate");
+		Check(fuzzyOn.find("抓") != std::string::npos, "fuzzy z->zh surfaces zhua candidate");
 
 		// --- 4. 门闸关闭：无后续写时输出稳定 ---
-		Check(ParseToString("zongguo") == fuzzyOn, "stable output when no further writes");
+		Check(ParseToString("zua") == fuzzyOn, "stable output when no further writes");
 
 		// --- 5. 连续写（代际多次推进），最终值生效 ---
 		writer.setConfig("fuzzyChoice", "0000000000000000000");
 		writer.setConfig("fuzzyChoice", "1000000000000000000");
-		Check(ParseToString("zongguo") == fuzzyOn, "latest of consecutive writes wins");
+		Check(ParseToString("zua") == fuzzyOn, "latest of consecutive writes wins");
 
 		// --- 6. 写回原值，恢复基线 ---
 		writer.setConfig("fuzzyChoice", "0000000000000000000");
-		Check(ParseToString("zongguo") == baseline, "write back restores baseline");
+		Check(ParseToString("zua") == baseline, "write back restores baseline");
 	}
 
 	std::cout << (g_failures == 0 ? "CONFIG GATE PASS\n" : "CONFIG GATE FAIL\n");
