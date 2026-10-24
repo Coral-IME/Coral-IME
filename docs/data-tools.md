@@ -42,7 +42,7 @@ python tools/data/generate_manifest.py --source-dir build/demo-runtime-tools --m
 
 默认重建字符模型和混拼模型。若指定 `--model-dir`，则明确复用该目录的 `char_lm.dat` 与 `correction_pinyin_model.dat`，记录校验值和 `model_mode:explicit-reuse`；这不代表重新训练或独立验证模型来源。
 
-GPT2 字符模型独立于上述两个纠错模型。需要携带时给 build_runtime.py 传入 --character-model PATH；该文件须为 CCHLM001 容器，会检查版本、长度及载荷 SHA-256，复制为 data/generallexicon/character_model.coral，并写入构建记录与运行包清单。package_windows.py 会收集该文件并让安装器原样落盘；传入 --require-character-model 可防止漏带。默认不选择外部权重，也不绑定本机模型路径。
+GPT2 字符模型独立于上述两个纠错模型。需要携带时给 build_runtime.py 传入 --character-model PATH；该文件须为 CCHLM001 容器，会检查版本、长度及载荷 SHA-256，默认将矩阵转换为 INT8 后保存为 data/generallexicon/character_model.coral，并分别记录源文件和产物摘要。已有 INT8 输入直接复制；--character-model-format preserve 保留原精度。package_windows.py 会收集该文件并让安装器原样落盘；传入 --require-character-model 可防止漏带。默认不选择外部权重，也不绑定本机模型路径。
 
 可先生成源清单，再通过 `--source-manifest` 在构建前校验：
 

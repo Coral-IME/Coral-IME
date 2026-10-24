@@ -11,6 +11,7 @@ sys.path.insert(0,str(ROOT/'tests/language_model'))
 from package_windows import package_character_model
 from runtime_manifest import character_model_info
 from test_character_model import fixture
+from character_model_format import quantize_model
 
 class CharacterPackageTest(unittest.TestCase):
     def setUp(self):
@@ -31,6 +32,12 @@ class CharacterPackageTest(unittest.TestCase):
 
     def test_recorded_model_is_selected(self):
         record=self.write_model()
+        self.assertEqual(package_character_model(self.root,record,True),record['character_model'])
+
+    def test_quantized_model_is_selected(self):
+        source=self.root/'float.coral';source.write_bytes(fixture())
+        quantize_model(source,self.model)
+        record={'character_model':character_model_info(self.model)}
         self.assertEqual(package_character_model(self.root,record,True),record['character_model'])
 
     def test_unrecorded_or_changed_model_is_rejected(self):

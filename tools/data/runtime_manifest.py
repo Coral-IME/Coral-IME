@@ -5,6 +5,7 @@ from pathlib import Path
 import configparser
 import hashlib
 import struct
+from character_model_format import inspect_model
 from paths import digest
 
 ENGINE_FILES={'BushouTrie':'data/bushou.marisa','BushouData':'data/bushou.dat','StrokeTrie':'data/stroke.marisa','StrokeData':'data/stroke.dat',
@@ -13,21 +14,10 @@ ENGINE_FILES={'BushouTrie':'data/bushou.marisa','BushouData':'data/bushou.dat','
  'CorrectionData':'data/generallexicon/correction_pinyin_model.dat','CharLMData':'data/generallexicon/char_lm.dat'}
 
 def character_model_info(path):
-    # 打包前核对容器版本、长度和载荷摘要；网络数学约束仍由原生加载器验证。
+    # 两种精度共用布局校验；网络数学约束仍由原生加载器验证。
     path=Path(path)
+    inspect_model(path)
     size=path.stat().st_size
-    if not 128 <= size <= 256*1024*1024:
-        raise ValueError('Invalid character model size: '+str(path))
-    checksum=hashlib.sha256()
-    with path.open('rb') as stream:
-        header=stream.read(128)
-        if (len(header)!=128 or header[:8]!=b'CCHLM001'
-                or struct.unpack_from('<IIQ',header,8)!=(1,128,size)
-                or any(header[60:64]) or any(header[96:128])):
-            raise ValueError('Invalid character model header: '+str(path))
-        for block in iter(lambda:stream.read(1024*1024),b''):checksum.update(block)
-    if checksum.digest()!=header[64:96]:
-        raise ValueError('Invalid character model payload checksum: '+str(path))
     return {'sha256':digest(path),'size':size}
 
 def inventory(root,exclude=()):

@@ -1,6 +1,10 @@
 ﻿# coral_engine_core：进程内静态词典核心
 
 set(CORAL_CHARACTER_RERANK_THRESHOLD "3" CACHE STRING "Skip neural reranking for candidates with at most N Unicode characters")
+set(CORAL_CHARACTER_RERANK_PATHS "8" CACHE STRING "Maximum structural paths scored by the character model")
+if(NOT CORAL_CHARACTER_RERANK_PATHS MATCHES "^([1-9]|[12][0-9]|3[0-2])$")
+    message(FATAL_ERROR "CORAL_CHARACTER_RERANK_PATHS must be an integer from 1 to 32")
+endif()
 if(NOT CORAL_CHARACTER_RERANK_THRESHOLD MATCHES "^(0|[1-9][0-9]?)$" OR CORAL_CHARACTER_RERANK_THRESHOLD GREATER 63)
     message(FATAL_ERROR "CORAL_CHARACTER_RERANK_THRESHOLD must be an integer from 0 to 63")
 endif()
@@ -137,6 +141,7 @@ function(coral_configure_phonetics target_name)
     # 含有条件成员的头文件必须与所有调用方使用同一开关，避免类布局不一致。
     target_compile_definitions(${target_name} PUBLIC CORAL_ENABLE_CHARACTER_MODEL=$<BOOL:${CORAL_ENABLE_CHARACTER_MODEL}>)
     target_compile_definitions(${target_name} PUBLIC CORAL_CHARACTER_RERANK_THRESHOLD=${CORAL_CHARACTER_RERANK_THRESHOLD})
+    target_compile_definitions(${target_name} PUBLIC CORAL_CHARACTER_RERANK_PATHS=${CORAL_CHARACTER_RERANK_PATHS})
     if(FUNCTIMER_OPEN)
         target_compile_definitions(${target_name} PRIVATE FUNCTIMER_OPEN)
     endif()

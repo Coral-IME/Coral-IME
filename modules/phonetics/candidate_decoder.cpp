@@ -685,7 +685,9 @@ void coral::phonetics::CandidateDecoder::rerank_character_paths(
     if ((!model || language_model_->character_weight() == 0) && (!trace_path || !*trace_path)) return;
     std::vector<std::string_view> texts;
     std::vector<size_t> indexes;
-    for (size_t i = 0; i < paths.size(); ++i) {
+    // 搜索保留原有 32 路，只对基础排序前 K 路进行神经评分；尾部路径不补位。
+    const size_t scored_limit = std::min(paths.size(), size_t{CORAL_CHARACTER_RERANK_PATHS});
+    for (size_t i = 0; i < scored_limit; ++i) {
         if (!eligible(paths[i].sentence)) continue;
         texts.push_back(paths[i].sentence);
         indexes.push_back(i);

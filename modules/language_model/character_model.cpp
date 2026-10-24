@@ -47,7 +47,14 @@ float dot(const float* a, const float* b, size_t n) {
     size_t i = 0;
     float sum = 0;
 #if defined(_M_X64) || defined(__SSE2__)
-    __m128 total = _mm_setzero_ps();
+    __m128 total = _mm_setzero_ps(), second = total, third = total, fourth = total;
+    for (; i + 16 <= n; i += 16) {
+        total = _mm_add_ps(total, _mm_mul_ps(_mm_loadu_ps(a + i), _mm_loadu_ps(b + i)));
+        second = _mm_add_ps(second, _mm_mul_ps(_mm_loadu_ps(a + i + 4), _mm_loadu_ps(b + i + 4)));
+        third = _mm_add_ps(third, _mm_mul_ps(_mm_loadu_ps(a + i + 8), _mm_loadu_ps(b + i + 8)));
+        fourth = _mm_add_ps(fourth, _mm_mul_ps(_mm_loadu_ps(a + i + 12), _mm_loadu_ps(b + i + 12)));
+    }
+    total = _mm_add_ps(_mm_add_ps(total, second), _mm_add_ps(third, fourth));
     for (; i + 4 <= n; i += 4)
         total = _mm_add_ps(total, _mm_mul_ps(_mm_loadu_ps(a + i), _mm_loadu_ps(b + i)));
     float lanes[4];
@@ -57,16 +64,43 @@ float dot(const float* a, const float* b, size_t n) {
     for (; i < n; ++i) sum += a[i] * b[i];
     return sum;
 }
+float quantized_dot(const int8_t* a, const float* b, size_t n) {
+    size_t i = 0;
+    float sum = 0;
+#if defined(_M_X64) || defined(__SSE2__)
+    const auto zero = _mm_setzero_si128();
+    auto first = _mm_setzero_ps(), second = first, third = first, fourth = first;
+    for (; i + 16 <= n; i += 16) {
+        const auto bytes = _mm_loadu_si128(reinterpret_cast<const __m128i*>(a + i));
+        const auto sign = _mm_cmpgt_epi8(zero, bytes);
+        const auto low = _mm_unpacklo_epi8(bytes, sign), high = _mm_unpackhi_epi8(bytes, sign);
+        const auto low_sign = _mm_cmpgt_epi16(zero, low), high_sign = _mm_cmpgt_epi16(zero, high);
+        first = _mm_add_ps(first, _mm_mul_ps(_mm_cvtepi32_ps(_mm_unpacklo_epi16(low, low_sign)), _mm_loadu_ps(b+i)));
+        second = _mm_add_ps(second, _mm_mul_ps(_mm_cvtepi32_ps(_mm_unpackhi_epi16(low, low_sign)), _mm_loadu_ps(b+i+4)));
+        third = _mm_add_ps(third, _mm_mul_ps(_mm_cvtepi32_ps(_mm_unpacklo_epi16(high, high_sign)), _mm_loadu_ps(b+i+8)));
+        fourth = _mm_add_ps(fourth, _mm_mul_ps(_mm_cvtepi32_ps(_mm_unpackhi_epi16(high, high_sign)), _mm_loadu_ps(b+i+12)));
+    }
+    float lanes[4];
+    _mm_storeu_ps(lanes, _mm_add_ps(_mm_add_ps(first, second), _mm_add_ps(third, fourth)));
+    sum = (lanes[0]+lanes[1]) + (lanes[2]+lanes[3]);
+#endif
+    for (; i < n; ++i) sum += float(a[i]) * b[i];
+    return sum;
+}
 }
 
 struct CharacterModel::Impl {
-    struct Layer { size_t gamma1, beta1, qkv, qkv_bias, project, project_bias;
-        size_t gamma2, beta2, expand, expand_bias, contract, contract_bias; };
+    struct Matrix { size_t offset = 0, scales = 0, rows = 0, columns = 0; };
+    struct Layer { size_t gamma1, beta1, qkv_bias, project_bias;
+        size_t gamma2, beta2, expand_bias, contract_bias; Matrix qkv, project, expand, contract; };
     struct State { std::vector<std::vector<float>> keys, values; std::vector<float> next; size_t length = 0; };
     uint32_t dimensions = 0, heads = 0, width = 0, vocabulary = 0, positions = 0, bos = 0;
     float epsilon = 0;
-    size_t embedding = 0, positional = 0, gamma = 0, beta = 0;
+    Matrix embedding;
+    size_t positional = 0, gamma = 0, beta = 0;
+    bool quantized = false;
     std::vector<float> weights;
+    std::vector<int8_t> packed_weights;
     std::vector<Layer> layers;
     std::unordered_map<uint32_t, uint32_t> tokens;
     State initial;
@@ -79,18 +113,23 @@ struct CharacterModel::Impl {
         const float inverse = 1.f / std::sqrt(variance / dimensions + epsilon);
         for (size_t i = 0; i < dimensions; ++i) x[i] = (x[i] - mean) * inverse * weights[g + i] + weights[b + i];
     }
-    std::vector<float> linear(const std::vector<float>& x, size_t matrix, size_t bias, size_t rows) const {
+    float matrix_dot(const Matrix& matrix, size_t row, const float* x) const {
+        return quantized ? weights[matrix.scales + row] * quantized_dot(
+            packed_weights.data() + matrix.offset + row*matrix.columns, x, matrix.columns)
+            : dot(weights.data() + matrix.offset + row*matrix.columns, x, matrix.columns);
+    }
+    std::vector<float> linear(const std::vector<float>& x, const Matrix& matrix, size_t bias, size_t rows) const {
         std::vector<float> y(rows);
         for (size_t i = 0; i < rows; ++i)
-            y[i] = dot(weights.data() + matrix + i * x.size(), x.data(), x.size()) + weights[bias + i];
+            y[i] = matrix_dot(matrix, i, x.data()) + weights[bias + i];
         return y;
     }
-    State advance(const State& previous, uint32_t token) const {
-        if (previous.length >= positions) throw std::runtime_error("character model context limit");
-        State state = previous;
+    void advance(State& state, uint32_t token) const {
+        if (state.length >= positions) throw std::runtime_error("character model context limit");
         std::vector<float> x(dimensions);
         for (size_t i = 0; i < dimensions; ++i)
-            x[i] = weights[embedding + token * dimensions + i] + weights[positional + previous.length * dimensions + i];
+            x[i] = (quantized ? float(packed_weights[embedding.offset + token*dimensions + i]) * weights[embedding.scales + token]
+                : weights[embedding.offset + token*dimensions + i]) + weights[positional + state.length*dimensions + i];
         for (size_t layer = 0; layer < layers.size(); ++layer) {
             const auto& w = layers[layer];
             auto normalized = x;
@@ -102,7 +141,7 @@ struct CharacterModel::Impl {
             std::vector<float> attention(dimensions, 0.f);
             const size_t head_width = dimensions / heads;
             for (size_t head = 0; head < heads; ++head) {
-                std::vector<float> logits(previous.length + 1);
+                std::vector<float> logits(state.length + 1);
                 for (size_t t = 0; t < logits.size(); ++t)
                     logits[t] = dot(qkv.data() + head * head_width,
                         keys.data() + t * dimensions + head * head_width, head_width) / std::sqrt(float(head_width));
@@ -126,14 +165,13 @@ struct CharacterModel::Impl {
         norm(x, gamma, beta);
         state.next.resize(vocabulary);
         for (size_t i = 0; i < vocabulary; ++i)
-            state.next[i] = dot(weights.data() + embedding + i * dimensions, x.data(), dimensions);
+            state.next[i] = matrix_dot(embedding, i, x.data());
         const float maximum = *std::max_element(state.next.begin(), state.next.end());
         double total = 0;
         for (float value : state.next) total += std::exp(double(value - maximum));
         const double normalizer = maximum + std::log(total);
         for (float& value : state.next) value = float(value - normalizer);
         ++state.length;
-        return state;
     }
 };
 
@@ -142,6 +180,9 @@ CharacterModel::~CharacterModel() = default;
 CharacterModel::CharacterModel(CharacterModel&&) noexcept = default;
 CharacterModel& CharacterModel::operator=(CharacterModel&&) noexcept = default;
 bool CharacterModel::valid() const noexcept { return impl_ != nullptr; }
+std::size_t CharacterModel::weight_bytes() const noexcept {
+    return impl_ ? impl_->weights.capacity()*sizeof(float) + impl_->packed_weights.capacity() : 0;
+}
 
 bool CharacterModel::load_file(const std::filesystem::path& path, std::string& error) {
     try {
@@ -150,7 +191,8 @@ bool CharacterModel::load_file(const std::filesystem::path& path, std::string& e
             throw std::runtime_error("character model file size");
         std::vector<uint8_t> bytes(static_cast<size_t>(input.tellg()));
         input.seekg(0); input.read(reinterpret_cast<char*>(bytes.data()), bytes.size());
-        if (!input || std::memcmp(bytes.data(), "CCHLM001", 8) || u32(bytes.data() + 8) != 1 ||
+        const auto version = u32(bytes.data() + 8);
+        if (!input || std::memcmp(bytes.data(), "CCHLM001", 8) || (version != 1 && version != 2) ||
             u32(bytes.data() + 12) != 128 || u64(bytes.data() + 16) != bytes.size() || u32(bytes.data() + 60))
             throw std::runtime_error("character model header");
         if (std::any_of(bytes.begin() + 96, bytes.begin() + 128, [](uint8_t v) { return v != 0; }))
@@ -160,6 +202,7 @@ bool CharacterModel::load_file(const std::filesystem::path& path, std::string& e
         if (!std::equal(digest.begin(), digest.end(), bytes.begin() + 64))
             throw std::runtime_error("character model digest");
         auto model = std::make_unique<Impl>();
+        model->quantized = version == 2;
         const uint32_t count = u32(bytes.data() + 24);
         model->dimensions = u32(bytes.data() + 28); model->heads = u32(bytes.data() + 32);
         model->width = u32(bytes.data() + 36); model->vocabulary = u32(bytes.data() + 40);
@@ -171,7 +214,11 @@ bool CharacterModel::load_file(const std::filesystem::path& path, std::string& e
             !std::isfinite(model->epsilon) || model->epsilon <= 0 || model->epsilon > .1f)
             throw std::runtime_error("character model dimensions");
         const uint64_t elements = v*d + p*d + 2*d + count*(4*d*d + 2*d*f + 9*d + f);
-        if (128 + v*4 + elements*4 != bytes.size()) throw std::runtime_error("character model payload size");
+        const uint64_t matrix_elements = v*d + count*(4*d*d + 2*d*f);
+        const uint64_t scales = v + count*(5*d + f);
+        const uint64_t float_elements = model->quantized ? elements - matrix_elements + scales : elements;
+        const uint64_t packed_elements = model->quantized ? matrix_elements : 0;
+        if (128 + v*4 + float_elements*4 + packed_elements != bytes.size()) throw std::runtime_error("character model payload size");
         for (uint32_t i = 0; i < v; ++i) {
             const auto scalar = u32(bytes.data() + 128 + i * 4);
             if (scalar >= 0x110000) {
@@ -182,26 +229,47 @@ bool CharacterModel::load_file(const std::filesystem::path& path, std::string& e
         if (u32(bytes.data() + 128 + model->bos * 4) < 0x110000 ||
             u32(bytes.data() + 128 + unknown * 4) < 0x110000)
             throw std::runtime_error("character model control tokens");
-        model->weights.resize(static_cast<size_t>(elements));
-        for (size_t i = 0; i < elements; ++i) {
-            const float value = f32(bytes.data() + 128 + v*4 + i*4);
-            if (!std::isfinite(value) || std::abs(value) > 10000) throw std::runtime_error("character model weight");
-            model->weights[i] = value;
-        }
-        size_t offset = 0;
-        const auto take = [&](size_t n) { const size_t result = offset; offset += n; return result; };
-        model->embedding = take(v*d); model->positional = take(p*d); model->gamma = take(d); model->beta = take(d);
+        model->weights.reserve(static_cast<size_t>(float_elements));
+        model->packed_weights.reserve(static_cast<size_t>(packed_elements));
+        size_t offset = static_cast<size_t>(128 + v*4);
+        const auto take = [&](size_t n) {
+            const auto begin = model->weights.size();
+            for (size_t i = 0; i < n; ++i) {
+                const float value = f32(bytes.data() + offset); offset += 4;
+                if (!std::isfinite(value) || std::abs(value) > 10000) throw std::runtime_error("character model weight");
+                model->weights.push_back(value);
+            }
+            return begin;
+        };
+        const auto matrix = [&](size_t rows, size_t columns) {
+            Impl::Matrix result{}; result.rows = rows; result.columns = columns;
+            if (!model->quantized) { result.offset = take(rows*columns); return result; }
+            result.scales = take(rows);
+            for (size_t row = 0; row < rows; ++row)
+                if (model->weights[result.scales + row] <= 0 || model->weights[result.scales + row] > 10000.f/127.f)
+                    throw std::runtime_error("character model scale");
+            result.offset = model->packed_weights.size();
+            for (size_t i = 0; i < rows*columns; ++i) {
+                const auto raw = bytes[offset++];
+                if (raw == 128) throw std::runtime_error("character model quantized weight");
+                const auto value = raw < 128 ? int(raw) : int(raw) - 256;
+                model->packed_weights.push_back(static_cast<int8_t>(value));
+            }
+            return result;
+        };
+        model->embedding = matrix(v,d); model->positional = take(p*d); model->gamma = take(d); model->beta = take(d);
         for (uint32_t i = 0; i < count; ++i) {
             Impl::Layer layer{};
-            layer.gamma1 = take(d); layer.beta1 = take(d); layer.qkv = take(3*d*d); layer.qkv_bias = take(3*d);
-            layer.project = take(d*d); layer.project_bias = take(d); layer.gamma2 = take(d); layer.beta2 = take(d);
-            layer.expand = take(f*d); layer.expand_bias = take(f); layer.contract = take(d*f); layer.contract_bias = take(d);
+            layer.gamma1 = take(d); layer.beta1 = take(d); layer.qkv = matrix(3*d,d); layer.qkv_bias = take(3*d);
+            layer.project = matrix(d,d); layer.project_bias = take(d); layer.gamma2 = take(d); layer.beta2 = take(d);
+            layer.expand = matrix(f,d); layer.expand_bias = take(f); layer.contract = matrix(d,f); layer.contract_bias = take(d);
             model->layers.push_back(layer);
         }
-        if (offset != elements) throw std::runtime_error("character model weight layout");
+        if (offset != bytes.size()) throw std::runtime_error("character model weight layout");
         Impl::State empty;
         empty.keys.resize(count); empty.values.resize(count);
-        model->initial = model->advance(empty, model->bos);
+        model->advance(empty, model->bos);
+        model->initial = std::move(empty);
         impl_ = std::move(model); error.clear(); return true;
     } catch (const std::exception& exception) { error = exception.what(); return false; }
 }
@@ -219,7 +287,8 @@ bool CharacterModel::score_candidates(std::string_view context, const std::vecto
         for (size_t i = begin; i < scalars.size(); ++i) {
             if (cancelled && cancelled()) return false;
             const auto found = model.tokens.find(scalars[i]);
-            state = found == model.tokens.end() ? model.initial : model.advance(state, found->second);
+            if (found == model.tokens.end()) state = model.initial;
+            else model.advance(state, found->second);
         }
         struct Node { uint32_t token; std::vector<size_t> children, outputs; };
         std::vector<Node> nodes(1);
@@ -247,18 +316,29 @@ bool CharacterModel::score_candidates(std::string_view context, const std::vecto
             }
             nodes[at].outputs.push_back(output);
         }
-        std::function<void(size_t, const Impl::State&, double)> visit;
-        visit = [&](size_t at, const Impl::State& previous, double total) {
+        std::function<void(size_t, double)> visit;
+        visit = [&](size_t at, double total) {
+            // 先保存直接子边的分数；回溯只缩短 KV，不保留每层整份词表和历史副本。
+            std::vector<double> child_scores;
+            for (auto child : nodes[at].children) child_scores.push_back(total + state.next[nodes[child].token]);
+            size_t index = 0;
             for (auto child : nodes[at].children) {
                 if (cancelled && cancelled()) throw std::runtime_error("character scoring cancelled");
                 const auto& node = nodes[child];
-                const double score = total + previous.next[node.token];
+                const double score = child_scores[index++];
                 if (!std::isfinite(score)) throw std::runtime_error("character model score");
                 for (auto output : node.outputs) result[output] = score;
-                if (!node.children.empty()) visit(child, model.advance(previous, node.token), score);
+                if (!node.children.empty()) {
+                    const auto length = state.length;
+                    model.advance(state, node.token);
+                    visit(child, score);
+                    state.length = length;
+                    for (auto& keys : state.keys) keys.resize(length*model.dimensions);
+                    for (auto& values : state.values) values.resize(length*model.dimensions);
+                }
             }
         };
-        visit(0, state, 0);
+        visit(0, 0);
         if (cancelled && cancelled()) return false;
         scores = std::move(result); return true;
     } catch (const std::exception&) { return false; }

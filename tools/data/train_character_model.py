@@ -11,6 +11,7 @@ import struct
 import subprocess
 import time
 import unicodedata
+import tempfile
 
 import torch
 from torch import nn
@@ -167,7 +168,16 @@ def load_checkpoint(path):
     return model.eval(), record
 
 
-def export_model(model, vocabulary, output):
+def export_model(model, vocabulary, output, precision='fp32'):
+    if precision not in ('fp32', 'int8'):
+        raise ValueError('unsupported model precision')
+    if precision == 'int8':
+        from character_model_format import quantize_model
+        with tempfile.TemporaryDirectory(prefix='coral-export-', dir=Path(output).parent) as directory:
+            intermediate = Path(directory)/'float.coral'
+            export_model(model, vocabulary, intermediate)
+            quantize_model(intermediate, output)
+        return
     config = model.config
     if (len(vocabulary) != model.embedding.num_embeddings or len(set(vocabulary)) != len(vocabulary) or
             vocabulary[:2] != [0x110000, 0x110001] or
@@ -342,6 +352,7 @@ def main():
     exporter = commands.add_parser('export')
     exporter.add_argument('--checkpoint', required=True)
     exporter.add_argument('--output', required=True)
+    exporter.add_argument('--precision', choices=['fp32', 'int8'], default='fp32')
     verifier = commands.add_parser('verify')
     for name in ['checkpoint', 'model', 'probe', 'cases']:
         verifier.add_argument('--' + name, required=True)
@@ -354,7 +365,7 @@ def main():
         train(args)
     elif args.command == 'export':
         model, record = load_checkpoint(args.checkpoint)
-        export_model(model, record['vocabulary'], args.output)
+        export_model(model, record['vocabulary'], args.output, args.precision)
     else:
         verify(args)
 

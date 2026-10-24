@@ -5,6 +5,7 @@ from pathlib import Path
 import argparse,json,os,shutil,subprocess,sys,uuid
 from paths import digest,output_path,require_files
 from runtime_manifest import inventory,write_runtime,verify_runtime,character_model_info
+from character_model_format import inspect_model,quantize_model
 
 TOOLS=Path(__file__).resolve().parent
 CONFIG=TOOLS.parents[1]/'resources/config'
@@ -16,6 +17,7 @@ def main():
     parser.add_argument('--config-dir',type=Path,default=CONFIG)
     parser.add_argument('--model-dir',type=Path,help='Explicit reuse of two compiled models; no model retraining')
     parser.add_argument('--character-model',type=Path,help='Optional external CCHLM001 weights; copied with checksum provenance')
+    parser.add_argument('--character-model-format',choices=('int8','preserve'),default='int8',help='Store character matrices as INT8 by default; preserve keeps original precision')
     parser.add_argument('--data-version',required=True);parser.add_argument('--engine-version',required=True)
     parser.add_argument('--source-manifest',type=Path,help='Prior source manifest (format 2) to verify before building')
     args=parser.parse_args()
@@ -51,8 +53,13 @@ def main():
         general=root/'data/generallexicon'
         if character_info:
             character_target=general/'character_model.coral'
-            shutil.copyfile(args.character_model,character_target)
-            if character_model_info(character_target)!=character_info:
+            source_character_info=character_info
+            if args.character_model_format=='int8' and inspect_model(args.character_model)[0]==1:
+                quantize_model(args.character_model,character_target)
+            else:
+                shutil.copyfile(args.character_model,character_target)
+            character_info=character_model_info(character_target)
+            if character_model_info(args.character_model)!=source_character_info:
                 raise ValueError('Character model changed during copying')
         if models:
             for name in ('correction_pinyin_model.dat','char_lm.dat'):shutil.copyfile(models/name,general/name)
@@ -77,6 +84,8 @@ def main():
             'coral_bundle_decoder_sha256':digest(args.bundle_decoder),'installer_bins_match':True,
             'model_mode':'explicit-reuse' if models else 'rebuilt',
             'character_model':character_info,
+            'character_model_source':source_character_info if character_info else None,
+            'character_model_format':('int8' if inspect_model(character_target)[0]==2 else 'float32') if character_info else None,
             'reused_models':{n:{'sha256':digest(models/n),'size':(models/n).stat().st_size} for n in ('correction_pinyin_model.dat','char_lm.dat')} if models else None,
             'tool_files':inventory(TOOLS,exclude=tuple(p.relative_to(TOOLS).as_posix() for p in TOOLS.rglob('*.pyc'))),'steps':steps}
         (root/'build-record.json').write_text(json.dumps(record,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')

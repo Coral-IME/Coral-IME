@@ -48,6 +48,9 @@ def main():
         cases.write_text('\n'.join(json.dumps(item, ensure_ascii=False) for item in examples), encoding='utf-8')
         training.verify(argparse.Namespace(checkpoint=str(root/'trained/best.pt'),
             model=str(root/'trained/character_model.coral'), probe=sys.argv[1], cases=str(cases), tolerance=.005))
+        training.export_model(model, record['vocabulary'], root/'int8.coral', 'int8')
+        training.verify(argparse.Namespace(checkpoint=str(root/'trained/best.pt'),
+            model=str(root/'int8.coral'), probe=sys.argv[1], cases=str(cases), tolerance=.2))
         args.output = str(root/'overlap')
         args.validation = args.train
         try:

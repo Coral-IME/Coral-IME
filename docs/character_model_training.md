@@ -38,7 +38,7 @@ python tools/data/train_character_model.py --threads 4 train `
 python tools/data/train_character_model.py export --checkpoint C:/models/character-run-001/best.pt --output C:/models/character_model.coral
 ```
 
-检查点仅保存张量和基本类型；读取显式使用 `weights_only=True`。导出文件拒绝覆盖，保存 float32 权重和载荷 SHA-256。运行端不依赖 PyTorch。
+检查点仅保存张量和基本类型；读取显式使用 `weights_only=True`。默认导出 float32，使用 `export --precision int8` 可直接生成 INT8 矩阵文件；两种格式都拒绝覆盖并保存载荷 SHA-256。已有 FP32 文件也可用 `character_model_format.py --input FLOAT.coral --output INT8.coral` 转换，此步骤不需要 PyTorch。位置、归一化、偏置和激活保留浮点，矩阵加载后保持 INT8，避免运行时重新展开导致内存收益消失。运行端不依赖 PyTorch。
 
 ## 原生一致性与准确率
 
@@ -51,6 +51,6 @@ python tests/language_model/test_character_training.py build/neural-on/coralpiny
 
 训练测试需要额外的 PyTorch 环境，按上述命令单独运行，不增加普通 CTest 的依赖。它实际训练一个随机网络，检查验证损失下降、验证字符不进入词表、训练验证重叠拒绝及原生推理一致性。普通 CTest 保持纯 Python/C++ 合成模型和解码器测试。
 
-字符交叉熵只验证语言建模能力；最终要在固定语料、相同词库、相同用户历史下比较开启/关闭模型后的首选命中、文字正确率、纠正与误伤、P50/P95 延迟。模型负责重排已有最多 32 条完整中文路径，不会补回未召回的候选或修复拼音切分。自有模型达标后，可通过 build_runtime.py --character-model PATH 显式选择权重；package_windows.py --require-character-model 可确保打包时不漏带。源码不包含模型权重。
+先用 FP32 验证训练图与原生图一致，再单独评估 INT8 引入的分数误差和候选变动；不能把浮点一致性容差直接当成量化质量门槛。字符交叉熵只验证语言建模能力；最终要在固定语料、相同词库、相同用户历史下比较首选命中、纠正与误伤及 P50/P95 延迟。模型默认只评分 32 条搜索路径中的前 8 条，可用 CORAL_CHARACTER_RERANK_PATHS=12 对照，不会补回未召回候选或修复拼音切分。build_runtime.py --character-model PATH 默认转换为 INT8；需要保留输入精度时加 --character-model-format preserve。package_windows.py --require-character-model 可确保不漏带。源码不包含权重。
 
 PyTorch 接口参考：[因果注意力](https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html)、[检查点加载](https://docs.pytorch.org/docs/stable/generated/torch.load.html)。

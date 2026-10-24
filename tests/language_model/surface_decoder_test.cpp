@@ -160,6 +160,18 @@ int main(int argc, char** argv) {
         std::vector<Edge> long_edges{{0,1,12,-1.f},{0,1,13,-1.f}};
         for (int at = 1; at < long_length; ++at) long_edges.push_back({at,at+1,12,-1.f});
         {
+            std::vector<Edge> many_paths;
+            for (int at = 0; at < 4; ++at)
+                for (auto id : {12u,13u,14u,99u}) many_paths.push_back({at,at+1,id,-1.f-float(id)*.0001f});
+            coral::language_model::CharacterRerankBatch batch;
+            coral::language_model::CharacterRerankScope capture(batch);
+            decode(many_paths,4,kInvalidPhraseId,1.f,model,&first);
+            if (CORAL_CHARACTER_RERANK_PATHS > 1 && CORAL_CHARACTER_RERANK_THRESHOLD < 4 &&
+                (batch.empty() || batch.front().texts.size() != size_t(CORAL_CHARACTER_RERANK_PATHS))) {
+                std::cerr << "Neural shortlist ignored its configured limit"; return 26;
+            }
+        }
+        {
             using namespace coral::language_model;
             CharacterRerankBatch captured;
             {
