@@ -3,6 +3,11 @@
   "project_license": "MPL-2.0",
   "license_documents": ["LICENSE", "LICENSING.md", "THIRD_PARTY_NOTICES.md"],
   "project_paths": [
+    "docs/tsf_edit_boundaries.md",
+    "tests/tsf_state/tsf_edit_boundaries_test.cpp",
+    "docs/input_configuration_snapshot.md",
+    "tests/tsf_state/config_snapshot_test.cpp",
+    "docs/ios-development-plan.md",
     "tools/release/publish_website.py",
     "tests/release/test_publish_website.py",
     "tools/data/character_model_format.py",

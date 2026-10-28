@@ -289,6 +289,9 @@ private:
 	CString getContent(int col) const;
 	HRESULT commitCandidateByVisualColumn(int visualColumn);
 	HRESULT finishCandidateSelection(int selectionResult, const CString& text);
+    HRESULT submit_text(const CString& text, bool learn = true, bool move_left = false, bool clear_keys = true);
+    void resume_composition(const coral::tsf::ContextToken& token, const std::shared_ptr<CEditMgr>& manager);
+    bool edit_focus_current(ITfContext* context) const;
 	void showCPinyinModelInitErrorDialog() const;
 
 	std::pair<bool, CString> isSpecialKey(WPARAM wParam);
@@ -301,6 +304,7 @@ private:
 	void prepareContextClose(coral::tsf::ContextState& state);
 	coral::composition::SessionToken activeEngineSession() const;
 	void refreshConfigSnapshot(bool force = false);
+    void schedule_config_refresh();
 	void syncEngineConfig();
 	bool hasThreadFocus() const;
 	void publishCandidateSnapshot();
@@ -344,10 +348,12 @@ private:
 	coral::tsf::TsfThreadContext m_tsfThreadContext;
 	std::shared_ptr<coral::text_service::SessionBridge> session_bridge_;
 	coral::tsf::ConfigAuthority m_configAuthority;
+    bool config_refresh_scheduled_ = false;
 	coral::tsf::RendererCoordinator m_rendererCoordinator;
 	std::shared_ptr<const coral::tsf::ImeConfigSnapshot> m_configSnapshot;
 	coral::tsf::RuntimeInputMode m_runtimeMode;
 	bool m_remoteToolbarVisible = false;
+    bool toolbar_requested_visible_ = false;
 	CSettingMenu m_settingMenu;
 };
 

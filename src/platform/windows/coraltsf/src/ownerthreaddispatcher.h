@@ -27,6 +27,8 @@ public:
 	bool postService(std::uint64_t serviceId, std::uint64_t request_id,
 		std::function<void()> callback);
 	bool postDelayed(RequestToken token, std::function<void()> callback, UINT delayMs);
+    bool postServiceDelayed(std::uint64_t service_id, std::uint64_t request_id,
+        std::function<void()> callback, UINT delay_ms);
 	bool isOwnerThread() const { return m_ownerThreadId == ::GetCurrentThreadId(); }
 
 private:
@@ -38,6 +40,7 @@ private:
 	};
 
 	bool enqueue(RequestToken token, std::function<void()> callback, bool serviceScoped);
+    bool post_timer(RequestToken token, std::function<void()> callback, UINT delay_ms, bool service_scoped);
 	static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
 	void drain();
 	void drainTimer(UINT_PTR timerId);

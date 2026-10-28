@@ -1,5 +1,7 @@
 # 首次输入耗时诊断
 
+输入期间的配置后台读取和来源判断见[配置快照说明](input_configuration_snapshot.md)。
+
 在 Windows 用户环境变量中设置 `CORAL_INPUT_TIMING=1`，然后重新启动承载 TSF 的目标程序、`coral_engine_host.exe` 和 `coral_renderer.exe`。服务代为启动引擎时会为目标用户创建环境块，因此先设置用户环境变量才能采集到子进程时间点。调试输出使用 Windows `OutputDebugStringW`，可用 DebugView 等工具抓取并按 `[coral_input_timing]` 过滤。采集结束后移除环境变量并重启这些进程。
 
 如需直接保存输出，在输入前从工作区运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools\diagnostics\capture-input-timing.ps1 -OutputPath C:/diagnostics/input-timing-capture.log`，保持该窗口运行，输入结束后按 Ctrl+C。捕获器只保存带 `[coral_input_timing]` 的行。

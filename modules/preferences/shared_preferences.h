@@ -24,6 +24,9 @@ public:
 	// 代际门闸：无锁读取当前共享内存代际（m_seqNum，写端每次更新 +2）。
 	// 仅用于"配置是否变更"的检测，不需要读到稳定快照值；未连接时返回 false。
 	bool getGeneration(std::uint64_t& generation) const;
+	// 后台只读连接不创建共享对象或取得写锁；完整快照携带同一次读取的稳定代次。
+	bool open_existing();
+	bool read_snapshot(std::unordered_map<std::string, std::string>& values, std::uint64_t& generation) const;
 	std::unordered_map<std::string, std::string> getAllConfigMap() const;
 
 private:

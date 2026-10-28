@@ -2,12 +2,85 @@
 #include "configauthority.h"
 
 #include "preference_registry.h"
+#include "input_timing.h"
+#include <atomic>
+#include <filesystem>
+#include <limits>
 
 namespace coral::tsf
 {
 
 namespace
 {
+struct RefreshTask {
+    HMODULE module = nullptr;
+    std::function<void()> run;
+};
+
+void CALLBACK RunConfigRefresh(PTP_CALLBACK_INSTANCE instance, void* context)
+{
+    std::unique_ptr<RefreshTask> task(static_cast<RefreshTask*>(context));
+    // 回调只拥有读取状态；最后一条指令返回前由系统释放 DLL 引用。
+    FreeLibraryWhenCallbackReturns(instance, task->module);
+    task->run();
+}
+
+bool ScheduleConfigRefresh(std::function<void()> run)
+{
+    auto task = std::make_unique<RefreshTask>();
+    task->run = std::move(run);
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+        reinterpret_cast<LPCWSTR>(&RunConfigRefresh), &task->module)) return false;
+    if (!TrySubmitThreadpoolCallback(RunConfigRefresh, task.get(), nullptr)) {
+        FreeLibrary(task->module);
+        return false;
+    }
+    task.release();
+    return true;
+}
+
+struct ConfigReader {
+    explicit ConfigReader(std::string file) : path(std::move(file)) {}
+    std::string path;
+    SharedMemoryConfig shared;
+    std::filesystem::file_time_type last_write{};
+    std::uint64_t last_generation = 0;
+    bool last_shared = false;
+    bool loaded = false;
+
+    std::unique_ptr<SettingsConfig> read()
+    {
+        coral::input_timing::Scope timing(L"tsf.config_background");
+        std::error_code error;
+        const auto file_start = coral::input_timing::nowUs();
+        const auto stamp = std::filesystem::last_write_time(path, error);
+        coral::input_timing::mark(L"tsf.config_file", file_start, 0, error.value());
+        if (error) return {};
+        const auto connect_start = coral::input_timing::nowUs();
+        const bool connected = shared.open_existing();
+        coral::input_timing::mark(L"tsf.config_source", connect_start, 0, connected ? 1 : 0);
+        std::uint64_t generation = 0;
+        if (connected && !shared.getGeneration(generation)) return {};
+        if (connected && (generation & 1)) return {};
+        if (loaded && stamp == last_write && connected == last_shared &&
+            (!connected || generation == last_generation)) return {};
+        std::unordered_map<std::string, std::string> values;
+        if (connected && !shared.read_snapshot(values, generation)) return {};
+        auto settings = SettingsConfig::read_only_snapshot(path, values);
+        if (!settings) return {};
+        const auto after = std::filesystem::last_write_time(path, error);
+        if (error || stamp != after) return {};
+        std::uint64_t final_generation = 0;
+        if (connected && (!shared.getGeneration(final_generation) ||
+            final_generation != generation)) return {};
+        last_write = stamp;
+        last_generation = generation;
+        last_shared = connected;
+        loaded = true;
+        return settings;
+    }
+};
+
 bool SameConfigContent(const ImeConfigSnapshot& a, const ImeConfigSnapshot& b)
 {
 	return a.candidateCount == b.candidateCount &&
@@ -43,7 +116,7 @@ bool SameConfigContent(const ImeConfigSnapshot& a, const ImeConfigSnapshot& b)
 		a.combined_lexicon_version == b.combined_lexicon_version &&
 		a.defaultFullWidth == b.defaultFullWidth &&
 		a.defaultTraditional == b.defaultTraditional &&
-		a.debugEnabled == b.debugEnabled;
+		a.debugEnabled == b.debugEnabled && a.placeholder_schemes == b.placeholder_schemes;
 }
 }
 
@@ -65,78 +138,142 @@ composition::SessionSettings ImeConfigSnapshot::engineConfig(
 	return result;
 }
 
+struct ConfigAuthority::State {
+    Snapshot snapshot;
+    Loader loader;
+    Schedule schedule;
+    std::shared_ptr<std::atomic<bool>> pending = std::make_shared<std::atomic<bool>>(false);
+    std::atomic<bool> stopped{false};
+};
+
 ConfigAuthority::ConfigAuthority()
+    : ConfigAuthority({}, {}, std::make_shared<ImeConfigSnapshot>()) {}
+
+ConfigAuthority::ConfigAuthority(Loader loader, Schedule schedule, Snapshot initial)
+    : state_(std::make_shared<State>())
 {
-	auto initial = std::make_shared<ImeConfigSnapshot>();
-	initial->revision = m_nextRevision++;
-	m_snapshot = std::move(initial);
+    state_->loader = std::move(loader);
+    state_->schedule = std::move(schedule);
+    state_->snapshot = initial ? std::move(initial) : std::make_shared<ImeConfigSnapshot>();
+}
+
+ConfigAuthority::~ConfigAuthority() { stop(); }
+
+void ConfigAuthority::stop()
+{
+    // 停用只撤销发布资格；在途任务独立拥有状态和 DLL，不回调 COM，也不阻塞宿主退出。
+    state_->stopped.store(true, std::memory_order_release);
+}
+
+void ConfigAuthority::initialize(const std::string& path)
+{
+    const auto pending = state_->pending;
+    stop();
+    state_ = std::make_shared<State>();
+    // 重新激活也共用在途额度，旧磁盘读取未结束时不再叠加新任务。
+    state_->pending = pending;
+    auto initial = buildSnapshot(*sConfig);
+    initial->revision = 1;
+    state_->snapshot = std::move(initial);
+    auto reader = std::make_shared<ConfigReader>(path);
+    state_->loader = [reader] {
+        auto settings = reader->read();
+        if (!settings) return std::shared_ptr<ImeConfigSnapshot>{};
+        try { return buildSnapshot(*settings); }
+        catch (...) {
+            reader->loaded = false;
+            throw;
+        }
+    };
+    state_->schedule = ScheduleConfigRefresh;
+}
+
+void ConfigAuthority::request_refresh()
+{
+    const auto state = state_;
+    if (state->stopped.load(std::memory_order_acquire) || !state->loader || !state->schedule) return;
+    bool expected = false;
+    if (!state->pending->compare_exchange_strong(expected, true)) return;
+    try {
+        if (state->schedule([state] {
+            try {
+                if (!state->stopped.load(std::memory_order_acquire)) {
+                    auto next = state->loader();
+                    const auto previous = std::atomic_load(&state->snapshot);
+                    if (next && !state->stopped.load(std::memory_order_acquire) &&
+                        !SameConfigContent(*previous, *next) &&
+                        previous->revision != (std::numeric_limits<std::uint64_t>::max)()) {
+                        next->revision = previous->revision + 1;
+                        std::atomic_store(&state->snapshot, Snapshot(std::move(next)));
+                    }
+                }
+            } catch (...) {
+                // 慢读取、解析或分配失败不能发布默认值或半份配置；下一轮继续尝试。
+            }
+            state->pending->store(false, std::memory_order_release);
+        })) return;
+    } catch (...) {}
+    state->pending->store(false, std::memory_order_release);
 }
 
 std::shared_ptr<const ImeConfigSnapshot> ConfigAuthority::refresh(bool force)
 {
-	std::lock_guard<std::mutex> lock(m_mutex);
-	if (!force && !sConfig->pollForUpdates())
-		return m_snapshot;
-	auto next = buildSnapshot();
-	if (m_snapshot && SameConfigContent(*m_snapshot, *next))
-		return m_snapshot;
-	next->revision = m_nextRevision++;
-	m_snapshot = std::move(next);
-	return m_snapshot;
+    if (force) request_refresh();
+    return current();
 }
 
 std::shared_ptr<const ImeConfigSnapshot> ConfigAuthority::current() const
 {
-	std::lock_guard<std::mutex> lock(m_mutex);
-	return m_snapshot;
+    return std::atomic_load(&state_->snapshot);
 }
 
-std::shared_ptr<ImeConfigSnapshot> ConfigAuthority::buildSnapshot() const
+std::shared_ptr<ImeConfigSnapshot> ConfigAuthority::buildSnapshot(const SettingsConfig& settings)
 {
 	auto config = std::make_shared<ImeConfigSnapshot>();
-	config->candidateCount = sConfig->getCandidateCount();
-	config->candidateFontSize = sConfig->getCandidateFontSize();
-	config->candidateFontName = sConfig->getCandidateFontName();
-	config->theme = sConfig->getTheme();
-	config->candidateSkin = sConfig->getCandidateSkin();
-	config->floatingToolbarOpen = sConfig->getIsFloatingToolbarOpen();
-	config->smart_prediction = sConfig->get_smart_prediction();
-	config->u_mode = sConfig->getIsUMode();
-	config->v_mode = sConfig->getIsVMode();
-	config->doublepinyinMode = sConfig->getIsDoublepinyinMode();
-	config->doublepinyinScheme = sConfig->getDoublepinyinSchemeName();
-	config->defaultEnglish = sConfig->getIsDefaultEnglishMode();
-	config->useEnglishPunctuation = sConfig->getIsUseEnglishPunctuation();
-	config->autoSymbolCompletion = sConfig->getIsAutoSymbolCompletion();
-	config->autoConvertDigitSymbol = sConfig->getIsAutoConvertDigitSymbol();
-	config->auto_convert_letter_symbol = sConfig->get_auto_convert_letter_symbol();
-	config->clipboardEnabled = sConfig->getIsClipboardEnabled();
-	config->ctrlSpaceShortcut = sConfig->getIsCtrlAndSpaceShortCutOpen();
-	config->shiftShortcut = sConfig->getIsShiftShortCutOpen();
-	config->ctrlShortcut = sConfig->getIsCtrlShortCutOpen();
-	config->shiftSpaceShortcut = sConfig->getIsShiftAndSpaceShortCutOpen();
-	config->simplifiedTraditionalShortcut = sConfig->getIsShortCutChangeCharacterSimOrTraOpen();
-	config->simplifiedTraditionalKey = sConfig->getCharacterChangeSimOrTra();
-	config->ctrlPeriodShortcut = sConfig->getIsCtrlAndPeriodShortCutOpen();
-	config->page_up_down = sConfig->get_page_up_down_enabled();
-    config->translation_enabled = sConfig->get_translation_enabled();
-    config->minus_equals_page = sConfig->get_minus_equals_page_enabled();
-    config->translation_shortcut_key = translation::shortcut_option(sConfig->get_translation_shortcut()).virtual_key;
-    config->translation_key_configured = sConfig->get_translation_key_configured();
-    config->translation_credential_revision = sConfig->get_translation_credential_revision();
-    config->translation_target = sConfig->get_translation_target();
-	config->bracketPage = sConfig->getIsBraceFlipPageOpen();
-	config->commaPeriodPage = sConfig->getIsCommaAndPeriodFlipPageOpen();
-	config->secondThirdCandidateKey = static_cast<int>(sConfig->getSecondThirdCandidateKey());
-	config->wordToCharacterKey = static_cast<int>(sConfig->getWordToCharacterKey());
-	config->pinyin_correction = sConfig->getPinyinCorrection();
-	config->fuzzy_choices = sConfig->getFuzzyChoice();
-	config->limit_count = sConfig->getLimitCount();
-	config->show_infos = sConfig->getIsShowInfos();
-	config->combined_lexicon_version = sConfig->getCombinedLexiconVersion();
-	config->defaultFullWidth = sConfig->runtime_full_width();
-	config->defaultTraditional = sConfig->runtime_traditional();
-	config->debugEnabled = sConfig->getIsDebugEnabled();
+	config->candidateCount = settings.getCandidateCount();
+	config->candidateFontSize = settings.getCandidateFontSize();
+	config->candidateFontName = settings.getCandidateFontName();
+	config->theme = settings.getTheme();
+	config->candidateSkin = settings.getCandidateSkin();
+	config->floatingToolbarOpen = settings.getIsFloatingToolbarOpen();
+	config->smart_prediction = settings.get_smart_prediction();
+	config->u_mode = settings.getIsUMode();
+	config->v_mode = settings.getIsVMode();
+	config->doublepinyinMode = settings.getIsDoublepinyinMode();
+	config->doublepinyinScheme = settings.getDoublepinyinSchemeName();
+	config->defaultEnglish = settings.getIsDefaultEnglishMode();
+	config->useEnglishPunctuation = settings.getIsUseEnglishPunctuation();
+	config->autoSymbolCompletion = settings.getIsAutoSymbolCompletion();
+	config->autoConvertDigitSymbol = settings.getIsAutoConvertDigitSymbol();
+	config->auto_convert_letter_symbol = settings.get_auto_convert_letter_symbol();
+	config->clipboardEnabled = settings.getIsClipboardEnabled();
+	config->ctrlSpaceShortcut = settings.getIsCtrlAndSpaceShortCutOpen();
+	config->shiftShortcut = settings.getIsShiftShortCutOpen();
+	config->ctrlShortcut = settings.getIsCtrlShortCutOpen();
+	config->shiftSpaceShortcut = settings.getIsShiftAndSpaceShortCutOpen();
+	config->simplifiedTraditionalShortcut = settings.getIsShortCutChangeCharacterSimOrTraOpen();
+	config->simplifiedTraditionalKey = settings.getCharacterChangeSimOrTra();
+	config->ctrlPeriodShortcut = settings.getIsCtrlAndPeriodShortCutOpen();
+	config->page_up_down = settings.get_page_up_down_enabled();
+    config->translation_enabled = settings.get_translation_enabled();
+    config->minus_equals_page = settings.get_minus_equals_page_enabled();
+    config->translation_shortcut_key = translation::shortcut_option(settings.get_translation_shortcut()).virtual_key;
+    config->translation_key_configured = settings.get_translation_key_configured();
+    config->translation_credential_revision = settings.get_translation_credential_revision();
+    config->translation_target = settings.get_translation_target();
+	config->bracketPage = settings.getIsBraceFlipPageOpen();
+	config->commaPeriodPage = settings.getIsCommaAndPeriodFlipPageOpen();
+	config->secondThirdCandidateKey = static_cast<int>(settings.getSecondThirdCandidateKey());
+	config->wordToCharacterKey = static_cast<int>(settings.getWordToCharacterKey());
+	config->pinyin_correction = settings.getPinyinCorrection();
+	config->fuzzy_choices = settings.getFuzzyChoice();
+	config->limit_count = settings.getLimitCount();
+	config->show_infos = settings.getIsShowInfos();
+	config->combined_lexicon_version = settings.getCombinedLexiconVersion();
+	config->defaultFullWidth = settings.runtime_full_width();
+	config->defaultTraditional = settings.runtime_traditional();
+	config->debugEnabled = settings.getIsDebugEnabled();
+    config->placeholder_schemes = settings.get_placeholder_schemes();
 	return config;
 }
 

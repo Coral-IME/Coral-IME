@@ -113,6 +113,10 @@ HRESULT ContextStore::ensure(ITfContext* context, ContextState** state)
 	ContextToken token{ m_serviceInstanceId, m_nextContextId++, 1 };
 	IUnknown* key = identity.p;
 	auto controller = std::make_shared<CEditMgr>(m_owner);
+    controller->set_edit_focus(false);
+    controller->set_focus_validator([owner = m_owner](ITfContext* context) {
+        return owner && owner->edit_focus_current(context);
+    });
 	auto candidateController = std::make_unique<CandidateController>();
 	auto candidateUIElement = std::make_unique<CCandidateListUIElement>(m_owner);
 	candidateUIElement->init();
@@ -188,16 +192,15 @@ HRESULT ContextStore::setFocused(ITfContext* context)
 {
 	if (!isOwnerThread())
 		return RPC_E_WRONG_THREAD;
-	for (auto& entry : m_states)
-		entry.second->m_focused = false;
-	if (!context)
-		return S_OK;
-
 	ContextState* state = nullptr;
-	const HRESULT hr = ensure(context, &state);
+	const HRESULT hr = context ? ensure(context, &state) : S_OK;
 	if (FAILED(hr))
 		return hr;
-	state->m_focused = true;
+    for (auto& entry : m_states) {
+        const bool focused = entry.second.get() == state;
+        entry.second->m_focused = focused;
+        entry.second->compositionController().set_edit_focus(focused);
+    }
 	return S_OK;
 }
 
@@ -215,6 +218,7 @@ HRESULT ContextStore::close(ITfContext* context)
 
 	if (m_owner)
 		m_owner->prepareContextClose(*it->second);
+    it->second->compositionController().retire_edits();
 	it->second->m_lifecycle = ContextLifecycle::Closing;
 	++it->second->m_token.generation;
 	LogContextEvent(L"closed", it->second->m_token);
@@ -237,6 +241,7 @@ HRESULT ContextStore::closeDocumentManager(ITfDocumentMgr* documentManager)
 		{
 			if (m_owner)
 				m_owner->prepareContextClose(*it->second);
+            it->second->compositionController().retire_edits();
 			it->second->m_lifecycle = ContextLifecycle::Closing;
 			++it->second->m_token.generation;
 			LogContextEvent(L"document_closed", it->second->m_token);
@@ -257,6 +262,7 @@ void ContextStore::clear()
 	{
 		if (m_owner)
 			m_owner->prepareContextClose(*entry.second);
+        entry.second->compositionController().retire_edits();
 		entry.second->m_lifecycle = ContextLifecycle::Closing;
 		++entry.second->m_token.generation;
 		LogContextEvent(L"service_cleared", entry.second->m_token);

@@ -106,7 +106,7 @@ float CSettingMenu::chrome(float value) const
 
 bool CSettingMenu::darkTheme() const
 {
-	return DarkTheme(sConfig->getTheme());
+	return m_owner && DarkTheme(m_owner->configSnapshot().theme);
 }
 
 RECT CSettingMenu::itemRect(int index) const
@@ -195,7 +195,7 @@ void CSettingMenu::toggle(const RECT& anchor)
 
 	m_hover = -1;
 	m_pressed = -1;
-	m_switchFrom = m_switchTo = sConfig->getIsFloatingToolbarOpen() ? 1.0f : 0.0f;
+	m_switchFrom = m_switchTo = m_owner && m_owner->configSnapshot().floatingToolbarOpen ? 1.0f : 0.0f;
 	const POINT position{ x - m_panel.left, y - m_panel.top };
 	render(&position);
 	::SetWindowPos(m_window, HWND_TOPMOST, 0, 0, 0, 0,
@@ -296,7 +296,7 @@ void CSettingMenu::select(int index)
 	if (!m_owner) { hide(); return; }
 	if (index == 0)
 	{
-		const bool enabled = !sConfig->getIsFloatingToolbarOpen();
+		const bool enabled = m_switchTo < 0.5f;
 		sConfig->setIsFloatingToolbarOpen(enabled);
 		m_owner->refreshFloatingToolbarPreference();
 		const auto now = Clock::now();

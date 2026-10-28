@@ -1,7 +1,6 @@
 ﻿#include "pch.h"
 #include "editsession.h"
 #include "preference_registry.h"
-#include "textservice.h"
 #include "displayattribute.h"
 #include <windows.h>
 #include <shellscalingapi.h>
@@ -13,7 +12,8 @@ namespace
 {
 std::atomic<std::uint64_t> g_nextEditOperationId{ 1 };
 
-HRESULT ApplyCompositionDisplayAttribute(ITfContext* context, TfEditCookie ec, ITfRange* range)
+HRESULT ApplyCompositionDisplayAttribute(ITfContext* context, TfEditCookie ec, ITfRange* range,
+    const std::function<bool()>& valid)
 {
 	if (!context || !range)
 		return E_INVALIDARG;
@@ -27,16 +27,19 @@ HRESULT ApplyCompositionDisplayAttribute(ITfContext* context, TfEditCookie ec, I
 		reinterpret_cast<void**>(&categoryMgr));
 	if (FAILED(hr))
 		return hr;
+    if (!categoryMgr || !valid()) return E_ABORT;
 
 	TfGuidAtom atom = TF_INVALID_GUIDATOM;
 	hr = categoryMgr->RegisterGUID(GUID_CoralPinyin_DisplayAttr, &atom);
 	if (FAILED(hr))
 		return hr;
+    if (!valid()) return E_ABORT;
 
 	CComPtr<ITfProperty> property;
 	hr = context->GetProperty(GUID_PROP_ATTRIBUTE, &property);
 	if (FAILED(hr))
 		return hr;
+    if (!property || !valid()) return E_ABORT;
 
 	VARIANT value;
 	VariantInit(&value);
@@ -47,13 +50,16 @@ HRESULT ApplyCompositionDisplayAttribute(ITfContext* context, TfEditCookie ec, I
 	return hr;
 }
 
-void ClearCompositionDisplayAttribute(ITfContext* context, TfEditCookie ec, ITfRange* range)
+HRESULT ClearCompositionDisplayAttribute(ITfContext* context, TfEditCookie ec, ITfRange* range,
+    const std::function<bool()>& valid)
 {
 	if (!context || !range)
-		return;
+		return E_INVALIDARG;
 	CComPtr<ITfProperty> property;
-	if (SUCCEEDED(context->GetProperty(GUID_PROP_ATTRIBUTE, &property)) && property)
-		property->Clear(ec, range);
+    const HRESULT status = context->GetProperty(GUID_PROP_ATTRIBUTE, &property);
+    if (FAILED(status)) return status;
+    if (!property || !valid()) return E_ABORT;
+    return property->Clear(ec, range);
 }
 
 HRESULT RequestEditSessionChecked(
@@ -63,7 +69,10 @@ HRESULT RequestEditSessionChecked(
 	DWORD flags)
 {
 	if (!context || !editSession || clientId == TF_CLIENTID_NULL)
+	{
+        if (editSession) editSession->complete_request(E_INVALIDARG);
 		return E_INVALIDARG;
+    }
 
 	HRESULT sessionHr = E_PENDING;
 	const HRESULT requestHr = context->RequestEditSession(clientId, editSession, flags, &sessionHr);
@@ -73,10 +82,12 @@ HRESULT RequestEditSessionChecked(
 			std::to_wstring(editSession->operationId()) + L" type=" +
 			std::wstring(editSession->operationName()) + L" hr=" +
 			std::to_wstring(static_cast<unsigned long>(requestHr)));
+        editSession->complete_request(requestHr);
 		return requestHr;
 	}
 	if (requestHr == TF_S_ASYNC || sessionHr == TF_S_ASYNC)
-		return S_OK;
+		return TF_S_ASYNC;
+    editSession->complete_request(sessionHr);
 	return sessionHr;
 }
 }
@@ -102,16 +113,21 @@ CEditSession::CEditSession(
 		m_lifetimeGuard = m_pEditMgr->getCompositionSink();
 		m_context = m_pEditMgr->getContext();
 		m_composition = m_pEditMgr->getComposition();
+        edit_epoch_ = m_pEditMgr->edit_epoch();
+        focus_epoch_ = m_pEditMgr->focus_epoch();
 	}
 }
 
 CEditSession::~CEditSession() {
-
+    complete_request(E_ABORT);
 }
 
 STDAPI CEditSession::DoEditSession(TfEditCookie ec)
 {
-	const HRESULT result = execute(ec);
+    if (completed_) return result_.status;
+    const bool cleanup = wcscmp(m_operationName, L"end") == 0 || unfocused_cleanup_;
+	const HRESULT result = current(!cleanup) && (!preflight_ || preflight_()) && current(!cleanup)
+        ? execute(ec) : E_ABORT;
 	if (FAILED(result))
 	{
 		LOG_ERROR_W(L"[tsf_edit] event=execute_failed operation_id=" +
@@ -119,7 +135,36 @@ STDAPI CEditSession::DoEditSession(TfEditCookie ec)
 			std::wstring(m_operationName) + L" hr=" +
 			std::to_wstring(static_cast<unsigned long>(result)));
 	}
+    complete_request(result);
 	return result;
+}
+
+void CEditSession::set_completion(EditCompletion callback, std::function<bool()> preflight)
+{
+    completion_ = std::move(callback);
+    preflight_ = std::move(preflight);
+}
+
+void CEditSession::complete_request(HRESULT status)
+{
+    if (completed_) return;
+    completed_ = true;
+    result_.status = status;
+    if (wcscmp(m_operationName, L"commit") == 0) {
+        LOG_INFO_W(L"[tsf_edit] event=commit_completed operation_id=" + std::to_wstring(m_operationId) +
+            L" hr=" + std::to_wstring(static_cast<unsigned long>(status)) +
+            L" text_written=" + std::to_wstring(result_.text_written) +
+            L" composition_ended=" + std::to_wstring(result_.composition_ended));
+    }
+    auto completion = std::move(completion_);
+    if (completion) completion(result_);
+}
+
+bool CEditSession::current(bool require_focus) const
+{
+    return m_pEditMgr && m_pEditMgr->edit_current(edit_epoch_, focus_epoch_, require_focus) &&
+        m_context == m_pEditMgr->getContext() &&
+        (!m_composition || m_composition == m_pEditMgr->getComposition());
 }
 
 CStartCompositionEditSession::CStartCompositionEditSession(CEditMgr* manager)
@@ -189,31 +234,40 @@ HRESULT CEditSession::doStart(TfEditCookie ec)
 			return hr;
 		ITfCompositionSink* pCompositionSink = m_pEditMgr->getCompositionSink();
 		CComPtr<ITfComposition> pComposition = nullptr;
+        if (!pRange || !pContextComposition || !current(true)) return E_ABORT;
 		hr = pContextComposition->StartComposition(ec, pRange, pCompositionSink, &pComposition);
 		if (hr != S_OK || !pComposition) {
-			return hr;
+			return FAILED(hr) ? hr : E_FAIL;
 		}
+        if (!current(true)) {
+            pComposition->EndComposition(ec);
+            return E_ABORT;
+        }
 		m_pEditMgr->setComposition(pComposition);
 
 		// Start 由按键接收器异步请求。等到本编辑会话运行时，
 		// 按键处理可能已经解析了更多字母；在此写入最新的预编辑文本，
 		// 使第一次组串永不为空。
-		const CString& text = m_pEditMgr->getAccumulatedPinyin();
+		const CString text = m_pEditMgr->getAccumulatedPinyin();
 		if (!text.IsEmpty())
 		{
 			hr = pRange->SetText(ec, TF_ST_CORRECTION, text, text.GetLength());
 			if (FAILED(hr))
 				return hr;
 
-			hr = ApplyCompositionDisplayAttribute(pContext, ec, pRange);
+            if (!current(true)) return E_ABORT;
+			hr = ApplyCompositionDisplayAttribute(pContext, ec, pRange, [this] { return current(true); });
 			if (FAILED(hr))
 				return hr;
 
 			// 在某些宿主中 SetText 可能把原始范围留在旧锚点。
 			// 移动宿主插入符之前重新获取组串范围。
+			pRange.Release();
+            if (!current(true)) return E_ABORT;
 			hr = pComposition->GetRange(&pRange);
 			if (FAILED(hr))
 				return hr;
+            if (!pRange || !current(true)) return E_ABORT;
 			hr = pRange->Collapse(ec, TF_ANCHOR_END);
 			if (FAILED(hr))
 				return hr;
@@ -221,12 +275,13 @@ HRESULT CEditSession::doStart(TfEditCookie ec)
 			selection.range = pRange;
 			selection.style.ase = TF_AE_NONE;
 			selection.style.fInterimChar = FALSE;
+            if (!current(true)) return E_ABORT;
 			hr = pContext->SetSelection(ec, 1, &selection);
 			if (FAILED(hr))
 				return hr;
 		}
 	}
-	return S_OK;
+	return hr;
 }
 
 HRESULT CEditSession::doEnd(TfEditCookie ec)
@@ -234,10 +289,13 @@ HRESULT CEditSession::doEnd(TfEditCookie ec)
 	ITfComposition* pComposition = m_composition;
 	if (pComposition)
 	{
+        m_pEditMgr->internal_end_ = true;
 		const HRESULT hr = pComposition->EndComposition(ec);
-		if (FAILED(hr))
-			return hr;
+        m_pEditMgr->internal_end_ = false;
+		if (hr != S_OK)
+			return FAILED(hr) ? hr : E_FAIL;
 		m_pEditMgr->clearTerminatedComposition(pComposition);
+        result_.composition_ended = true;
 		return S_OK;
 	}
 	return S_FALSE;
@@ -250,28 +308,28 @@ HRESULT CEditSession::doTextBound(TfEditCookie ec)
 	if (!pContext || !pComposition) {
 		return S_FALSE;
 	}
-	TF_SELECTION selection;
+	TF_SELECTION selection = {};
 	ULONG nSelection = 0;
 	HRESULT hr = pContext->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &selection, &nSelection);
-	if (!SUCCEEDED(hr))
-		return hr;
+	CComPtr<ITfRange> selection_range;
+    selection_range.Attach(selection.range);
+    if (FAILED(hr)) return hr;
+    if (nSelection != 1 || !selection_range) return E_FAIL;
 	CComPtr<ITfContextView> pContextView;
 	hr = pContext->GetActiveView(&pContextView);
 	if (!SUCCEEDED(hr))
 		return hr;
+    if (!pContextView || !current(true)) return E_ABORT;
 	BOOL fClipped = FALSE;
-	CRect rc;
+	CRect rc(0, 0, 0, 0);
 	hr = pContextView->GetTextExt(ec, selection.range, &rc, &fClipped);
-	if (selection.range) {
-		selection.range->Release();
-	}
 	//做一个fallback判断,如果tsf获取屏幕坐标失败(不在窗口内)，则从系统获取
 	HWND hwndView = NULL;
 	pContextView->GetWnd(&hwndView);
 	if (hwndView) {
 		CRect wrc;
 		if (::GetWindowRect(hwndView, &wrc) &&
-			(!wrc.PtInRect(rc.TopLeft()) || !wrc.PtInRect(rc.BottomRight())))
+			(FAILED(hr) || !wrc.PtInRect(rc.TopLeft()) || !wrc.PtInRect(rc.BottomRight())))
 		{
 			// 从系统插入符号获取屏幕坐标
 			DWORD tid = ::GetWindowThreadProcessId(hwndView, NULL);
@@ -280,6 +338,7 @@ HRESULT CEditSession::doTextBound(TfEditCookie ec)
 				CRect rcCaret = gi.rcCaret;
 				::MapWindowPoints(gi.hwndCaret, NULL, (LPPOINT)&rcCaret, 2);
 				rc = rcCaret;
+                hr = S_OK;
 			}
 		}
 	}
@@ -287,12 +346,14 @@ HRESULT CEditSession::doTextBound(TfEditCookie ec)
 		return hr;
 	if (!m_textBoundOut)
 		return E_POINTER;
+    if (!current(true)) return E_ABORT;
 	*m_textBoundOut = rc;
 	return S_OK;
 }
 
 HRESULT CEditSession::doInput(TfEditCookie ec)
 {
+    if (m_pEditMgr->has_committed_text() || m_pEditMgr->commit_pending()) return E_ABORT;
 	ITfContext* pContext = m_context;
 	ITfComposition* pComposition = m_composition;
 	if (!pContext || !pComposition) {
@@ -304,19 +365,23 @@ HRESULT CEditSession::doInput(TfEditCookie ec)
 	{
 		return E_FAIL;
 	}
+    if (!pRange || !current(true)) return E_ABORT;
 	hr = pRange->SetText(ec, TF_ST_CORRECTION, m_text, m_text.GetLength());
 	if (FAILED(hr)) return hr;
+    if (!current(true)) return E_ABORT;
 	hr = pRange->Collapse(ec, m_anchor);
 	if (FAILED(hr)) return hr;
 	TF_SELECTION tfSelection = { 0 };
 	tfSelection.range = pRange;
 	tfSelection.style.ase = TF_AE_NONE;
 	tfSelection.style.fInterimChar = FALSE;
+    if (!current(true)) return E_ABORT;
 	return pContext->SetSelection(ec, 1, &tfSelection);
 }
 
 HRESULT CEditSession::doComposition(TfEditCookie ec)
 {
+    if (m_pEditMgr->has_committed_text() || m_pEditMgr->commit_pending()) return E_ABORT;
 	ITfContext* pContext = m_context;
 	ITfComposition* pComposition = m_composition;
 	if (!pContext || !pComposition)
@@ -325,17 +390,20 @@ HRESULT CEditSession::doComposition(TfEditCookie ec)
 	CComPtr<ITfRange> pRange;
 	HRESULT hr = pComposition->GetRange(&pRange);
 	if (hr != S_OK) return hr;
-
+    if (!pRange || !current(true)) return E_ABORT;
 	hr = pRange->SetText(ec, TF_ST_CORRECTION, m_text, m_text.GetLength());
 	if (hr != S_OK) return hr;
-
-	hr = ApplyCompositionDisplayAttribute(pContext, ec, pRange);
+    if (!current(true)) return E_ABORT;
+	hr = ApplyCompositionDisplayAttribute(pContext, ec, pRange, [this] { return current(true); });
 	if (FAILED(hr)) return hr;
 
 	// 替换后重新获取范围，使选区落在当前预编辑文本之后，
 	// 包括保留静态替换范围的编辑器。
+    if (!current(true)) return E_ABORT;
+    pRange.Release();
 	hr = pComposition->GetRange(&pRange);
 	if (FAILED(hr)) return hr;
+    if (!pRange || !current(true)) return E_ABORT;
 	hr = pRange->Collapse(ec, TF_ANCHOR_END);
 	if (hr != S_OK) return hr;
 
@@ -344,6 +412,7 @@ HRESULT CEditSession::doComposition(TfEditCookie ec)
 	tfSelection.style.ase = TF_AE_NONE;
 	tfSelection.style.fInterimChar = FALSE;
 
+    if (!current(true)) return E_ABORT;
 	hr = pContext->SetSelection(ec, 1, &tfSelection);
 	if (hr != S_OK) return hr;
 
@@ -353,35 +422,51 @@ HRESULT CEditSession::doComposition(TfEditCookie ec)
 HRESULT CEditSession::doCommit(TfEditCookie ec)
 {
 	ITfContext* pContext = m_context;
-	CComPtr<ITfComposition> pComposition = m_composition;
+    CComPtr<ITfComposition> pComposition = m_pEditMgr->getComposition();
 	if (!pContext || !pComposition)
-		return S_FALSE;
+		return E_FAIL;
+    if (m_pEditMgr->has_committed_text()) return E_ABORT;
 
 	CComPtr<ITfRange> pRange;
 	HRESULT hr = pComposition->GetRange(&pRange);
 	if (FAILED(hr))
 		return hr;
-	if (FAILED(hr = pRange->SetText(ec, TF_ST_CORRECTION, m_text, m_text.GetLength())))
-		return hr;
-	ClearCompositionDisplayAttribute(pContext, ec, pRange);
-	if (FAILED(hr = pComposition->GetRange(&pRange)))
-		return hr;
-	if (FAILED(hr = pRange->Collapse(ec, TF_ANCHOR_END)))
-		return hr;
+    if (!pRange || !current(true)) return E_ABORT;
+    hr = pRange->SetText(ec, TF_ST_CORRECTION, m_text, m_text.GetLength());
+    if (hr != S_OK) return FAILED(hr) ? hr : E_FAIL;
+    // 写入是不可重放的边界；后续定位或结束失败仍须确认文字已经写入。
+    result_.text_written = true;
+    if (m_pEditMgr->getComposition() == pComposition) m_pEditMgr->committed_text_ = true;
+    m_pEditMgr->record_written_text(m_text);
+    if (!current(true)) return E_ABORT;
+    ClearCompositionDisplayAttribute(pContext, ec, pRange, [this] { return current(true); });
+    if (!current(true)) return E_ABORT;
+    pRange.Release();
+    hr = pComposition->GetRange(&pRange);
+    if (SUCCEEDED(hr) && !pRange) hr = E_FAIL;
+    if (SUCCEEDED(hr) && current(true)) hr = pRange->Collapse(ec, TF_ANCHOR_END);
 	TF_SELECTION selection = { 0 };
 	selection.range = pRange;
 	selection.style.ase = TF_AE_NONE;
 	selection.style.fInterimChar = FALSE;
-	if (FAILED(hr = pContext->SetSelection(ec, 1, &selection)))
-		return hr;
-	hr = pComposition->EndComposition(ec);
-	if (SUCCEEDED(hr))
+    if (SUCCEEDED(hr) && current(true)) hr = pContext->SetSelection(ec, 1, &selection);
+    if (!current(false)) return E_ABORT;
+    m_pEditMgr->internal_end_ = true;
+    HRESULT end_status = pComposition->EndComposition(ec);
+    m_pEditMgr->internal_end_ = false;
+	if (end_status == S_OK)
+    {
 		m_pEditMgr->clearTerminatedComposition(pComposition);
-	return hr;
+        result_.composition_ended = true;
+    }
+    else if (SUCCEEDED(end_status)) end_status = E_FAIL;
+	return FAILED(hr) ? hr : end_status;
 }
 
 HRESULT CEditSession::doCancel(TfEditCookie ec)
 {
+    // 已写入的文字只能结束组串，不能再作为预编辑清空。
+    if (m_pEditMgr->has_committed_text()) return doEnd(ec);
 	CComPtr<ITfComposition> pComposition = m_composition;
 	if (!pComposition)
 		return S_FALSE;
@@ -390,16 +475,26 @@ HRESULT CEditSession::doCancel(TfEditCookie ec)
 	HRESULT hr = pComposition->GetRange(&pRange);
 	if (FAILED(hr))
 		return hr;
+	if (!pRange || !current(!unfocused_cleanup_)) return E_ABORT;
 	if (FAILED(hr = pRange->SetText(ec, TF_ST_CORRECTION, L"", 0)))
 		return hr;
+    if (m_pEditMgr->getComposition() == pComposition) m_pEditMgr->committed_text_ = true;
+    if (!current(false)) return E_ABORT;
+    m_pEditMgr->internal_end_ = true;
 	hr = pComposition->EndComposition(ec);
-	if (SUCCEEDED(hr))
+    m_pEditMgr->internal_end_ = false;
+	if (hr == S_OK)
+    {
 		m_pEditMgr->clearTerminatedComposition(pComposition);
+        result_.composition_ended = true;
+    }
+    else if (SUCCEEDED(hr)) hr = E_FAIL;
 	return hr;
 }
 
 HRESULT CEditSession::doUpdatePlaceholder(TfEditCookie ec)
 {
+    if (m_pEditMgr->has_committed_text() || m_pEditMgr->commit_pending()) return E_ABORT;
 	ITfContext* pContext = m_context;
 	ITfComposition* pComposition = m_composition;
 	if (!pContext || !pComposition)
@@ -413,12 +508,13 @@ HRESULT CEditSession::doUpdatePlaceholder(TfEditCookie ec)
 	if (m_text.IsEmpty()) {
 		return S_OK;
 	}
-
+    if (!pRange || !current(true)) return E_ABORT;
 	hr = pRange->SetText(ec, TF_ST_CORRECTION, m_text, m_text.GetLength());
 	if (hr != S_OK)
 		return hr;
 
 	// 只有PINYINHOLDER模式才把光标放到后面
+    if (!current(true)) return E_ABORT;
 	hr = pRange->Collapse(ec, m_anchor);
 	if (hr != S_OK)
 		return hr;
@@ -427,7 +523,7 @@ HRESULT CEditSession::doUpdatePlaceholder(TfEditCookie ec)
 	tfSelection.range = pRange;
 	tfSelection.style.ase = TF_AE_NONE;
 	tfSelection.style.fInterimChar = FALSE;
-
+    if (!current(true)) return E_ABORT;
 	hr = pContext->SetSelection(ec, 1, &tfSelection);
 	if (hr != S_OK)
 		return hr;
@@ -437,21 +533,30 @@ HRESULT CEditSession::doUpdatePlaceholder(TfEditCookie ec)
 
 HRESULT CEditSession::doSetCursorPos(TfEditCookie ec)
 {
+    if (m_cursorPos < 0 || m_pEditMgr->has_committed_text()) return E_INVALIDARG;
 	ITfContext* pContext = m_context;
 	ITfComposition* pComposition = m_composition;
 	if (!pContext || !pComposition)
 		return S_FALSE;
 
 	CComPtr<ITfRange> pRange;
-	HRESULT hr = pComposition->GetRange(&pRange);
+	CComPtr<ITfRange> composition_range;
+    HRESULT hr = pComposition->GetRange(&composition_range);
 	if (hr != S_OK) return hr;
+    if (!composition_range) return E_FAIL;
+    hr = composition_range->Clone(&pRange);
+    if (FAILED(hr)) return hr;
+    if (!pRange || !current(true)) return E_ABORT;
 
 	LONG cchActualMoved = 0; // 用于接收实际移动的字符数
-	hr = pRange->ShiftStart(ec, m_cursorPos, &cchActualMoved, NULL);
+    const TF_HALTCOND halt = { composition_range, TF_ANCHOR_END, 0 };
+	hr = pRange->ShiftStart(ec, m_cursorPos, &cchActualMoved, &halt);
 	if (hr != S_OK) return hr;
+    if (cchActualMoved != m_cursorPos || !current(true)) return E_FAIL;
 
 	hr = pRange->Collapse(ec, TF_ANCHOR_START);
 	if (hr != S_OK) return hr;
+    if (!current(true)) return E_ABORT;
 
 	TF_SELECTION tfSelection = { 0 };
 	tfSelection.range = pRange;
@@ -569,15 +674,10 @@ int CEditMgr::isNeedFilter(const CString& text) const
 	return needFilter ? NEED_FILTER : VAILD_STR;
 }
 
-void CEditMgr::setProcessName(const CString& process_name)
+void CEditMgr::setProcessName(const CString& process_name, int placeholder_scheme)
 {
 	m_processName = process_name;
-	std::string processBaseName(CT2A(m_processName, CP_UTF8));
-	size_t dotPos = processBaseName.find_last_of('.');
-	if (dotPos != std::string::npos) {
-		processBaseName = processBaseName.substr(0, dotPos);
-	}
-	m_scheme = sConfig->getPlaceHolderValue(processBaseName);
+    m_scheme = placeholder_scheme;
 }
 
 void CEditMgr::processbAboutToShow(WPARAM wParam)
@@ -591,50 +691,64 @@ void CEditMgr::processbAboutToShow(WPARAM wParam)
 HRESULT CEditMgr::start(TfClientId clientId, ITfContext* pContext, ITfCompositionSink* pCompositionSink)
 {
 	ASSERT(clientId != TF_CLIENTID_NULL);
+    if (!pContext || retired_) return E_INVALIDARG;
+    if (committed_text_) return end(clientId);
+    if (start_pending_) return TF_S_ASYNC;
 	if (exsitComposition())
 	{
 		return S_OK;
 	}
 	m_pContext = pContext;
-	CComPtr<ITfContextView> pContextView;  
-	if (pContext->GetActiveView(&pContextView) != S_OK)
-	{
-		return S_FALSE;
-	}
 	m_pCompositionSink = pCompositionSink;
 	CComPtr<CEditSession> pEditSession;
 	pEditSession.Attach(new CStartCompositionEditSession(this));
+    start_pending_ = true;
+    const auto epoch = edit_epoch_;
+    pEditSession->set_completion([manager = shared_from_this(), epoch](const EditResult&) {
+        if (manager->edit_epoch_ == epoch) manager->start_pending_ = false;
+    });
 	return RequestEditSessionChecked(
 		pContext, clientId, pEditSession, TF_ES_ASYNCDONTCARE | TF_ES_READWRITE);
 }
 
-HRESULT CEditMgr::end(TfClientId clientId)
+HRESULT CEditMgr::end(TfClientId client_id, EditCompletion completion)
 {
-	ASSERT(clientId != TF_CLIENTID_NULL);
+	ASSERT(client_id != TF_CLIENTID_NULL);
+    if (end_pending_) return TF_S_ASYNC;
 	setAboutToShow(false);
 	setPositionEnhanced(false);
 	if (!m_pContext)
-		return E_FAIL;
+    {
+        if (completion) completion(EditResult{ E_FAIL, false, false });
+        return E_FAIL;
+    }
 	CComPtr<CEditSession> pEditSession;
 	pEditSession.Attach(new CEndCompositionEditSession(this));
+    end_pending_ = true;
+    const auto sequence = request_sequence_;
+    pEditSession->set_completion([manager = shared_from_this(), sequence, completion = std::move(completion)]
+        (const EditResult& result) {
+        if (sequence == manager->request_sequence_) manager->end_pending_ = false;
+        if (completion) completion(result);
+    });
 	return RequestEditSessionChecked(
-		m_pContext, clientId, pEditSession, TF_ES_ASYNCDONTCARE | TF_ES_READWRITE);
+		m_pContext, client_id, pEditSession, TF_ES_ASYNCDONTCARE | TF_ES_READWRITE);
 }
 
 HRESULT CEditMgr::commit(TfClientId clientId, const CString& text)
 {
-	ASSERT(clientId != TF_CLIENTID_NULL);
-	if (!m_pContext || !exsitComposition())
-		return S_FALSE;
-	CComPtr<CEditSession> pEditSession;
-	pEditSession.Attach(new CCommitCompositionEditSession(this, text));
-	return RequestEditSessionChecked(
-		m_pContext, clientId, pEditSession, TF_ES_ASYNCDONTCARE | TF_ES_READWRITE);
+    return insertText(clientId, text, {}, {});
 }
 
 HRESULT CEditMgr::cancel(TfClientId clientId)
 {
 	ASSERT(clientId != TF_CLIENTID_NULL);
+    if (start_pending_ && !exsitComposition()) {
+        invalidate_edits();
+        clearAccumulatedPinyin();
+        return S_OK;
+    }
+    invalidate_edits();
 	if (!m_pContext || !exsitComposition())
 		return S_FALSE;
 	CComPtr<CEditSession> pEditSession;
@@ -654,6 +768,33 @@ HRESULT CEditMgr::setCursorPos(TfClientId clientId, int pos)
 }
 
 HRESULT CEditMgr::insertText(TfClientId clientId, const CString& text)
+{
+    return insertText(clientId, text, {}, {});
+}
+
+HRESULT CEditMgr::insertText(TfClientId client_id, const CString& text,
+    EditCompletion completion, std::function<bool()> preflight)
+{
+    if (retired_ || commit_pending_ || committed_text_ || !m_pContext ||
+        (!exsitComposition() && !start_pending_))
+    {
+        if (completion) completion(EditResult{ E_ABORT, false, false });
+        return E_ABORT;
+    }
+    commit_pending_ = true;
+    CComPtr<CEditSession> session;
+    session.Attach(new CCommitCompositionEditSession(this, text));
+    const auto sequence = request_sequence_;
+    session->set_completion([manager = shared_from_this(), sequence, completion = std::move(completion)]
+        (const EditResult& result) {
+        if (sequence == manager->request_sequence_) manager->commit_pending_ = false;
+        if (completion) completion(result);
+    }, std::move(preflight));
+    return RequestEditSessionChecked(m_pContext, client_id, session,
+        TF_ES_ASYNCDONTCARE | TF_ES_READWRITE);
+}
+
+void CEditMgr::record_written_text(const CString& text)
 {
 	// 不需要过滤的情况才添加到m_allInput
 	int res = isNeedFilter(text);
@@ -682,10 +823,41 @@ HRESULT CEditMgr::insertText(TfClientId clientId, const CString& text)
 		}
 	}
 	
-	// 此路径只用于最终输出。把替换与 EndComposition 放进同一个
-	// 写会话，可避免已上屏词
-	// 在目标应用中仍处于组串范围。
-	return commit(clientId, text);
+}
+
+void CEditMgr::set_edit_focus(bool focused)
+{
+    if (focused_ == focused) return;
+    focused_ = focused;
+    ++focus_epoch_;
+    if (!focused) invalidate_edits();
+}
+
+void CEditMgr::invalidate_edits()
+{
+    ++edit_epoch_;
+    ++request_sequence_;
+    start_pending_ = false;
+    commit_pending_ = false;
+    end_pending_ = false;
+}
+
+void CEditMgr::retire_edits()
+{
+    retired_ = true;
+    invalidate_edits();
+    ++focus_epoch_;
+    start_pending_ = false;
+    focus_validator_ = {};
+}
+
+bool CEditMgr::edit_current(std::uint64_t epoch, std::uint64_t focus, bool require_focus) const
+{
+    if (owner_thread_ != ::GetCurrentThreadId() || retired_ || epoch != edit_epoch_) return false;
+    if (!require_focus) return true;
+    if (!focused_ || focus != focus_epoch_) return false;
+    if (focus_validator_ && !focus_validator_(m_pContext)) return false;
+    return !retired_ && epoch == edit_epoch_ && focused_ && focus == focus_epoch_;
 }
 
 HRESULT CEditMgr::insertPlaceholder(TfClientId clientId)
@@ -851,10 +1023,12 @@ ITfContext* CEditMgr::getContext() const
 
 void CEditMgr::setContext(CComPtr<ITfContext> pContext)
 {
+    if (m_pContext != pContext) invalidate_edits();
 	m_pContext = std::move(pContext);
 }
 
 void CEditMgr::setComposition(CComPtr<ITfComposition> pComposition) {
+    if (m_pComposition && m_pComposition != pComposition) invalidate_edits();
 	m_pComposition = std::move(pComposition);
 }
 
@@ -862,6 +1036,8 @@ bool CEditMgr::clearTerminatedComposition(ITfComposition* pComposition)
 {
 	if (!pComposition || m_pComposition != pComposition)
 		return false;
+    invalidate_edits();
+    committed_text_ = false;
 	m_pComposition.Release();
 	m_pContext.Release();
 	m_bKeepPlaceholder = false;
@@ -880,10 +1056,13 @@ const CString& CEditMgr::getAccumulatedPinyin() const {
 HRESULT CEditMgr::cancelSynchronously(TfClientId clientId)
 {
 	ASSERT(clientId != TF_CLIENTID_NULL);
+    // 关闭前先使排队的写入失效，再请求同步清理现有组串。
+    invalidate_edits();
 	if (!m_pContext || !exsitComposition())
 		return S_FALSE;
 	CComPtr<CEditSession> pEditSession;
 	pEditSession.Attach(new CCancelCompositionEditSession(this));
+    pEditSession->allow_unfocused_cleanup();
 	return RequestEditSessionChecked(
 		m_pContext, clientId, pEditSession, TF_ES_SYNC | TF_ES_READWRITE);
 }

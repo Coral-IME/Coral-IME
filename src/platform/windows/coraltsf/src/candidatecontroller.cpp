@@ -10,7 +10,7 @@
 
 namespace
 {
-constexpr int kMaxPinyinLength = 40;
+constexpr int kMaxPinyinLength = 90;
 constexpr int kMaxSeparators = 20;
 constexpr int kFetchSize = 60;
 constexpr int kPrefetchThreshold = 15;
@@ -812,7 +812,6 @@ int CandidateController::selectCandidateByIndex(CString& text, int index)
         m_verbatimCommit = true;
         resetConditionWord();
         if (m_sink) {
-            if (m_uiLessMode) m_sink->endCandidateUIElement();
             m_sink->setKeepPlaceholder(true);
         }
         return 1;
@@ -827,8 +826,6 @@ int CandidateController::selectCandidateByIndex(CString& text, int index)
         resetConditionWord();
 		if (m_sink)
 		{
-			if (m_uiLessMode)
-				m_sink->endCandidateUIElement();
 			m_sink->setKeepPlaceholder(true);
 		}
 		return 1;
@@ -839,6 +836,14 @@ int CandidateController::selectCandidateByIndex(CString& text, int index)
 		text.Empty();
 		return 0;
 	}
+    if (!m_selected.empty() && m_unfinished.IsEmpty()) {
+        if (index == getSelectedCandidateIndex()) {
+            text = m_selectedWord;
+            return 1;
+        }
+        m_selected.pop_back();
+        rebuildDerivedState();
+    }
 	const CString candidatePinyin(candidate->pinyin.c_str());
 	int rawLength = useDoublepinyinParsing()
 		? consumedDoublepinyinLength(candidatePinyin)
@@ -865,27 +870,61 @@ int CandidateController::selectCandidateByIndex(CString& text, int index)
 	}
 
 	text = m_selectedWord;
-    prediction_window_ = ::GetForegroundWindow();
-    if (m_config && m_config->smart_prediction && m_inputMode == InputMode::IM_Normal)
-        m_condition = coral::composition::prediction_context(m_condition.GetString(), m_selectedWord.GetString()).c_str();
-    else resetConditionWord();
-	std::uint32_t conditionId = (std::numeric_limits<std::uint32_t>::max)();
-	if (m_source && m_sessionId)
-		m_source->remember_candidate(m_sessionId,
-			std::string(CT2A(m_selectedPinyin, CP_UTF8)),
-			std::string(CT2A(text, CP_UTF8)), conditionId);
-	if (m_sink)
-	{
-		auto& history = m_sink->getCandInput();
-		history.push_back(text);
-		if (history.size() > 6)
-			history.erase(history.begin());
-		if (m_uiLessMode)
-			m_sink->endCandidateUIElement();
-		m_sink->setKeepPlaceholder(true);
-	}
-	m_selectedWordCount += text.GetLength();
-	return 1;
+    return 1;
+}
+
+CandidateController::CommitState CandidateController::prepare_commit()
+{
+    return {m_rawInput, getPinyinHolder(), m_selectedWord, m_selectedPinyin,
+        commit_generation_, ++next_commit_id_, !m_selectedWord.IsEmpty() &&
+        m_unfinished.IsEmpty() && !is_translation_mode() && !m_clipboardMode};
+}
+
+bool CandidateController::commit_current(const CommitState& state) const
+{
+    // 等待写锁期间可以继续追加输入，但不能改写已经选定的前缀。
+    return state.generation == commit_generation_ &&
+        m_rawInput.Left(state.raw.GetLength()) == state.raw &&
+        m_selectedWord.Left(state.word.GetLength()) == state.word &&
+        (!state.word.IsEmpty() || m_selectedWord.IsEmpty());
+}
+
+bool CandidateController::complete_commit(const CommitState& state)
+{
+    if (state.id <= completed_commit_id_) return false;
+    completed_commit_id_ = state.id;
+    if (state.learn) {
+        const CString& text = state.word;
+        prediction_window_ = ::GetForegroundWindow();
+        if (m_config && m_config->smart_prediction && m_inputMode == InputMode::IM_Normal)
+            m_condition = coral::composition::prediction_context(m_condition.GetString(), state.word.GetString()).c_str();
+        else resetConditionWord();
+        std::uint32_t condition_id = (std::numeric_limits<std::uint32_t>::max)();
+        if (m_source && m_sessionId)
+            m_source->remember_candidate(m_sessionId, std::string(CT2A(state.pinyin, CP_UTF8)),
+                std::string(CT2A(text, CP_UTF8)), condition_id);
+        if (m_sink) {
+            auto& history = m_sink->getCandInput();
+            history.push_back(text);
+            if (history.size() > 6) history.erase(history.begin());
+        }
+        m_selectedWordCount += text.GetLength();
+    } else resetConditionWord();
+    // SetText 可能重入按键处理。只消费本次写入对应的前缀，保留新输入。
+    if (state.raw == m_rawInput && state.holder == getPinyinHolder() && commit_current(state)) {
+        Reset();
+        return true;
+    }
+    if (state.generation == commit_generation_ &&
+        m_rawInput.Left(state.raw.GetLength()) == state.raw) {
+        m_rawInput.Delete(0, state.raw.GetLength());
+        m_selected.clear();
+        rebuildDerivedState();
+        m_cursor = m_unfinished.GetLength();
+        queryCandidates();
+        notifyComposition();
+    }
+    return false;
 }
 
 coral::tsf::SegmentedComposition CandidateController::segmentedUnfinished() const
@@ -1060,6 +1099,7 @@ void CandidateController::prefetchCandidates(bool force)
 
 void CandidateController::Reset()
 {
+    ++commit_generation_;
     cancel_refinement();
     cancel_translation_request();
     translation_.reset();

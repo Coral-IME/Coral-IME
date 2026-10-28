@@ -217,6 +217,28 @@ public:
 		return const_cast<SharedMemoryConfig::Impl*>(this)->tryReconnect();
 	}
 
+    bool open_existing() {
+        if (m_initialized && m_configData) return true;
+        m_sharedMemoryName = coral::testing::objectName(CONFIG_SHM_NAME);
+        if (!connectToSharedMemory(true)) return false;
+        m_initialized = true;
+        return true;
+    }
+
+    bool read_snapshot(std::unordered_map<std::string, std::string>& values,
+        std::uint64_t& generation) const {
+        auto buffer = std::make_unique<ConfigBuffer>();
+        ShmFlagType index = 0;
+        ShmFlagType sequence = 0;
+        if (!copy_active_buffer(*buffer, index, &sequence)) return false;
+        std::unordered_map<std::string, std::string> next;
+        for (const auto& slot : buffer->m_slots)
+            if (slot.m_occupied) next.emplace(slot.m_key, slot.m_value);
+        values = std::move(next);
+        generation = sequence;
+        return true;
+    }
+
 	bool tryReconnect() {
 		m_initialized = false;
 		m_configData = nullptr;
@@ -463,7 +485,8 @@ private:
     }
 
     // 保持 V4 布局；每次使用都校验本地索引，不能只依赖连接时检查。
-    bool copy_active_buffer(ConfigBuffer& buffer, ShmFlagType& active_index) const {
+    bool copy_active_buffer(ConfigBuffer& buffer, ShmFlagType& active_index,
+        ShmFlagType* stable_sequence = nullptr) const {
         if (!m_configData || m_configData->m_initialized.load(std::memory_order_acquire) != 1) return false;
         for (int retry = 0; retry < MAX_SEQLOCK_RETRIES; ++retry) {
             const auto sequence = m_configData->m_seqNum.load(std::memory_order_acquire);
@@ -471,7 +494,11 @@ private:
             active_index = m_configData->m_activeIndex.load(std::memory_order_acquire);
             if (active_index >= 2) return false;
             std::memcpy(&buffer, &m_configData->m_buffers[active_index], sizeof(buffer));
-            if (sequence == m_configData->m_seqNum.load(std::memory_order_acquire)) return valid_buffer(buffer);
+            if (sequence == m_configData->m_seqNum.load(std::memory_order_acquire)) {
+                if (!valid_buffer(buffer)) return false;
+                if (stable_sequence) *stable_sequence = sequence;
+                return true;
+            }
         }
         return false;
     }
@@ -548,15 +575,20 @@ private:
 		}
 	}
 
-	bool connectToSharedMemory() {
+	bool connectToSharedMemory(bool read_only = false) {
 		if (!hlp::ShmExistsByName(m_sharedMemoryName)) {
 			return false;
 		}
 		try {
-			m_segment = SimpleManagedSharedMemory(bip::open_only, m_sharedMemoryName.c_str());
+            if (read_only)
+                m_segment = SimpleManagedSharedMemory(bip::open_read_only, m_sharedMemoryName.c_str());
+            else
+                m_segment = SimpleManagedSharedMemory(bip::open_only, m_sharedMemoryName.c_str());
 			// 先按字节查询长度，避免错误大小对象触发第三方类型长度断言。
 			m_configData = nullptr;
-			auto result = m_segment.find<char>(CONFIG_DATA_NAME);
+            // 根对象在初始化后不增删；只读映射不能写入分配器的查找互斥体。
+            auto result = read_only ? m_segment.find_no_lock<char>(CONFIG_DATA_NAME) :
+                m_segment.find<char>(CONFIG_DATA_NAME);
 			const auto base = reinterpret_cast<std::uintptr_t>(m_segment.get_address());
 			const auto address = reinterpret_cast<std::uintptr_t>(result.first);
 			if (!result.first || result.second != sizeof(SharedConfigData) ||
@@ -626,4 +658,13 @@ bool SharedMemoryConfig::ensureConnection() const {
 
 bool SharedMemoryConfig::getGeneration(std::uint64_t& generation) const {
 	return m_pImpl->getGeneration(generation);
+}
+
+bool SharedMemoryConfig::open_existing() {
+    return m_pImpl->open_existing();
+}
+
+bool SharedMemoryConfig::read_snapshot(std::unordered_map<std::string, std::string>& values,
+    std::uint64_t& generation) const {
+    return m_pImpl->read_snapshot(values, generation);
 }

@@ -3,6 +3,15 @@
 #define CORAL_SRC_PLATFORM_WINDOWS_CORALTSF_SRC_EDITSESSION_H_INCLUDED
 
 #define MAX_BUFFER_SIZE 2048
+#include <functional>
+
+struct EditResult {
+    HRESULT status = E_PENDING;
+    bool text_written = false;
+    bool composition_ended = false;
+};
+using EditCompletion = std::function<void(const EditResult&)>;
+
 class CEditMgr;
 class CTextService;
 
@@ -52,6 +61,9 @@ protected:
 	STDMETHODIMP DoEditSession(TfEditCookie ec) final;
 	std::uint64_t operationId() const { return m_operationId; }
 	const wchar_t* operationName() const { return m_operationName; }
+    void set_completion(EditCompletion callback, std::function<bool()> preflight = {});
+    void complete_request(HRESULT status);
+    void allow_unfocused_cleanup() { unfocused_cleanup_ = true; }
 
 public:
 
@@ -76,6 +88,13 @@ private:
 	LONG m_cRef = 0; /*  COM 引用计数 */
 	std::uint64_t m_operationId = 0;
 	const wchar_t* m_operationName = L"unknown";
+    EditCompletion completion_;
+    std::function<bool()> preflight_;
+    EditResult result_;
+    bool completed_ = false;
+    bool unfocused_cleanup_ = false;
+    std::uint64_t edit_epoch_ = 0, focus_epoch_ = 0;
+    bool current(bool require_focus) const;
 
 protected:
 	// TSF 可能在 ContextState 关闭后仍执行异步编辑会话。
@@ -145,13 +164,26 @@ public:
 
 public:
 	HRESULT start(TfClientId clientId, ITfContext* pContext, ITfCompositionSink* pTextService);
-	HRESULT end(TfClientId clientId);
+	HRESULT end(TfClientId client_id, EditCompletion completion = {});
 	HRESULT commit(TfClientId clientId, const CString& text);
 	HRESULT cancel(TfClientId clientId);
 	HRESULT cancelSynchronously(TfClientId clientId);
 	HRESULT updateComposition(TfClientId clientId, const CString& text);
 	HRESULT setCursorPos(TfClientId clientId, int pos);
 	HRESULT insertText(TfClientId clientId, const CString& text);
+    HRESULT insertText(TfClientId client_id, const CString& text, EditCompletion completion,
+        std::function<bool()> preflight);
+    void set_edit_focus(bool focused);
+    void invalidate_edits();
+    void retire_edits();
+    void set_focus_validator(std::function<bool(ITfContext*)> validator) { focus_validator_ = std::move(validator); }
+    bool edit_current(std::uint64_t epoch, std::uint64_t focus, bool require_focus) const;
+    std::uint64_t edit_epoch() const { return edit_epoch_; }
+    std::uint64_t focus_epoch() const { return focus_epoch_; }
+    bool start_pending() const { return start_pending_; }
+    bool commit_pending() const { return commit_pending_; }
+    bool has_committed_text() const { return committed_text_; }
+    bool internal_end() const { return internal_end_; }
 	HRESULT insertPlaceholder(TfClientId clientId);
 	HRESULT updatePlaceholder(TfClientId clientId);
 	HRESULT getTextBound(TfClientId clientId, CRect& rc);
@@ -171,7 +203,7 @@ public:
 	CString& getAllInput();
 	std::vector<CString>& getCandInput();
 	int isNeedFilter(const CString& text) const;
-	void setProcessName(const CString& process_name);
+	void setProcessName(const CString& process_name, int placeholder_scheme);
 	int getScheme() const;
 	void setKeepPlaceholder(bool bKeepPlaceholder);
 	const CString& getLastTwoChars() const;
@@ -189,6 +221,14 @@ private:
 	void dpiAdapt(CRect& rc);
 
 private:
+    friend class CEditSession;
+    void record_written_text(const CString& text);
+    DWORD owner_thread_ = ::GetCurrentThreadId();
+    std::uint64_t edit_epoch_ = 1, focus_epoch_ = 1;
+    std::uint64_t request_sequence_ = 1;
+    bool focused_ = true, retired_ = false, start_pending_ = false;
+    bool commit_pending_ = false, end_pending_ = false, committed_text_ = false, internal_end_ = false;
+    std::function<bool(ITfContext*)> focus_validator_;
 	int m_scheme = 0;
 	ITfCompositionSink* m_pCompositionSink = nullptr;
 	WCHAR m_choosenText[MAX_BUFFER_SIZE + 1] = { 0 };

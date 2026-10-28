@@ -91,10 +91,23 @@ bool OwnerThreadDispatcher::enqueue(RequestToken token, std::function<void()> ca
 bool OwnerThreadDispatcher::postDelayed(
 	RequestToken token, std::function<void()> callback, UINT delayMs)
 {
+    return post_timer(token, std::move(callback), delayMs, false);
+}
+
+bool OwnerThreadDispatcher::postServiceDelayed(std::uint64_t service_id, std::uint64_t request_id,
+    std::function<void()> callback, UINT delay_ms)
+{
+    if (!service_id) return false;
+    return post_timer({{service_id, 0, 0}, request_id}, std::move(callback), delay_ms, true);
+}
+
+bool OwnerThreadDispatcher::post_timer(RequestToken token, std::function<void()> callback,
+    UINT delayMs, bool service_scoped)
+{
 	if (!isOwnerThread() || !callback || token.request_id == 0 || !m_window)
 		return false;
 	const UINT_PTR timerId = m_nextTimerId++;
-	m_timers.emplace(timerId, WorkItem{ token, std::move(callback) });
+	m_timers.emplace(timerId, WorkItem{ token, std::move(callback), service_scoped });
 	if (::SetTimer(m_window, timerId, delayMs, nullptr))
 		return true;
 	m_timers.erase(timerId);
@@ -154,7 +167,9 @@ void OwnerThreadDispatcher::drainTimer(UINT_PTR timerId)
 	::KillTimer(m_window, timerId);
 	WorkItem item = std::move(it->second);
 	m_timers.erase(it);
-	if (m_contexts && m_contexts->isCurrent(item.token))
+	if (m_contexts && (item.serviceScoped ?
+        item.token.context.serviceInstanceId == m_contexts->serviceInstanceId() :
+        m_contexts->isCurrent(item.token)))
 		item.callback();
 }
 

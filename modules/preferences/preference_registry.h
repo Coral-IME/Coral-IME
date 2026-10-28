@@ -65,6 +65,9 @@ private:
 
 public:
 	static SettingsConfig& getInstance();
+    // 独立只读视图只加载一次 INI，并按存储策略合并一份完整共享快照；不初始化或写入全局配置。
+    static std::unique_ptr<SettingsConfig> read_only_snapshot(const std::string& path,
+        const std::unordered_map<std::string, std::string>& shared_values);
 	void init(const std::string& iniFilePath);
     // 仅运行时启动阶段调用，此时先前模型及其借用方均已停止。
     void prepare_runtime_settings(const std::string& ini_file_path);
@@ -224,6 +227,7 @@ public:
 	SettingsIniManager* getSettingStore();
 
 	int getPlaceHolderValue(const std::string& key) const;
+    std::unordered_map<std::string, int> get_placeholder_schemes() const;
 
 	void setBatchConfigs(const std::vector<std::pair<std::string, std::string>>& configs);
 private:
@@ -238,6 +242,11 @@ private:
 		}
 
 		const ConfigItem& item = configIt->second;
+        if (m_readOnlyValues) {
+            const auto value = m_readOnlyValues->find(key);
+            return coral::preferences::ScalarTextCodec<T>::parse(
+                value == m_readOnlyValues->end() ? item.defaultValue : value->second);
+        }
 #if defined(_WIN32) || defined(_MSC_VER)
 		// SHARED_MEMORY 策略：直接从共享内存读取
 		if (item.policy == StoragePolicy::SHARED_MEMORY) {
@@ -289,6 +298,8 @@ private:
 	mutable std::mutex m_mutex;
 	std::string m_iniFilePath;
 	std::unique_ptr<SettingsIniManager> m_configStore;
+    std::unique_ptr<std::unordered_map<std::string, std::string>> m_readOnlyValues;
+    std::unordered_map<std::string, int> read_only_placeholders_;
 	// 最近一次观测到的共享内存代际（pollForUpdates 的比较基准）
 	std::uint64_t m_lastConfigGeneration = 0;
 	bool m_configGenerationValid = false;

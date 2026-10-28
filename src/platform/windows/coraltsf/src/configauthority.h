@@ -5,8 +5,11 @@
 
 #include <cstdint>
 #include <memory>
-#include <mutex>
+#include <functional>
 #include <string>
+#include <unordered_map>
+
+class SettingsConfig;
 
 namespace coral::tsf
 {
@@ -57,6 +60,14 @@ struct ImeConfigSnapshot
 	bool defaultFullWidth = false;
 	bool defaultTraditional = false;
 	bool debugEnabled = false;
+    std::unordered_map<std::string, int> placeholder_schemes;
+
+    int placeholder_scheme(std::string process_name) const {
+        const auto dot = process_name.find_last_of('.');
+        if (dot != std::string::npos) process_name.resize(dot);
+        const auto found = placeholder_schemes.find(process_name);
+        return found == placeholder_schemes.end() ? 0 : found->second;
+    }
 
 	bool translation_shortcut_available() const {
         return translation_enabled && !translation::shortcut_conflicts(translation_shortcut_key, minus_equals_page);
@@ -69,15 +80,23 @@ class ConfigAuthority final
 {
 public:
 	ConfigAuthority();
+    using Snapshot = std::shared_ptr<const ImeConfigSnapshot>;
+    using Loader = std::function<std::shared_ptr<ImeConfigSnapshot>()>;
+    using Schedule = std::function<bool(std::function<void()>)>;
+    ConfigAuthority(Loader loader, Schedule schedule, Snapshot initial);
+    ~ConfigAuthority();
+    ConfigAuthority(const ConfigAuthority&) = delete;
+    ConfigAuthority& operator=(const ConfigAuthority&) = delete;
+    void initialize(const std::string& path);
+    void request_refresh();
+    void stop();
 	std::shared_ptr<const ImeConfigSnapshot> refresh(bool force = false);
 	std::shared_ptr<const ImeConfigSnapshot> current() const;
 
 private:
-	std::shared_ptr<ImeConfigSnapshot> buildSnapshot() const;
-
-	mutable std::mutex m_mutex;
-	std::shared_ptr<const ImeConfigSnapshot> m_snapshot;
-	std::uint64_t m_nextRevision = 1;
+    struct State;
+    static std::shared_ptr<ImeConfigSnapshot> buildSnapshot(const SettingsConfig& settings);
+    std::shared_ptr<State> state_;
 };
 
 class RuntimeInputMode final

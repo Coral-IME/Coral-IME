@@ -145,7 +145,7 @@ void check_prediction()
     auto select = [&] {
         CString text;
         require(controller.selectCurrentCandidate(text) == 1, "Prediction fixture commit failed");
-        controller.Reset();
+        controller.complete_commit(controller.prepare_commit());
     };
     type(L"chuhe"); require(source->last_condition.empty(), "Initial context must be empty"); select();
     type(L"ri"); require(source->last_condition == u8"锄禾", "Previous selection missing"); select();
@@ -167,6 +167,45 @@ void check_prediction()
     require(prediction_context(L"猪肉", L"abc").empty(), "Latin retained context");
     require(prediction_context(std::wstring(16, L'中'), L"文").size() == 16, "Context is unbounded");
     std::cout << "[PASS] Prediction defaults, accumulated context, toggle, reset and boundaries\n";
+}
+
+void check_commit_acknowledgement()
+{
+    auto source = std::make_shared<Source>();
+    Sink sink;
+    CandidateController controller;
+    controller.setTextService(&sink);
+    controller.set_candidate_provider(source, 1, false);
+    auto config = std::make_shared<coral::tsf::ImeConfigSnapshot>();
+    controller.setConfigSnapshot(config);
+    auto type = [&](const wchar_t* text) { for (wchar_t c : std::wstring(text)) controller.addLetter(c); };
+    type(L"nihao");
+    CString text;
+    require(controller.selectCurrentCandidate(text) == 1 && source->remembered == 0 && sink.history.empty() &&
+        controller.getPinyin() == L"nihao", "Selection consumed input or learned before document write");
+    const auto commit = controller.prepare_commit();
+    require(controller.commit_current(commit), "Fresh commit proposal rejected");
+    CString retry;
+    require(controller.selectCurrentCandidate(retry) == 1 && retry == text,
+        "Retry after rejected write duplicated selected segments");
+    require(controller.complete_commit(commit) && controller.getPinyin().IsEmpty() && source->remembered == 1 &&
+        sink.history.size() == 1, "Written selection was not acknowledged");
+    controller.complete_commit(commit);
+    require(source->remembered == 1 && sink.history.size() == 1, "Completion learned twice");
+
+    type(L"nihao"); controller.selectCurrentCandidate(text);
+    const auto delayed = controller.prepare_commit();
+    controller.addLetter(L'm');
+    require(controller.commit_current(delayed), "Appending input invalidated the selected prefix");
+    require(!controller.complete_commit(delayed) && controller.getPinyin() == L"m",
+        "Write reentrancy erased input typed after the committed prefix");
+
+    controller.Reset(); type(L"nihao"); controller.selectCurrentCandidate(text);
+    const auto old = controller.prepare_commit();
+    controller.Reset(); type(L"nihao");
+    require(!controller.commit_current(old), "Reset allowed same-text stale commit");
+    controller.complete_commit(old);
+    require(controller.getPinyin() == L"nihao", "Old completion cleared a new composition");
 }
 
 // 用可阻塞的优化源驱动真实控制器与消息循环，制造正常打字很难稳定撞到的晚到结果。
@@ -263,7 +302,7 @@ void check_refinement() {
     }
     controller.Reset(); source->enabled = true; source->hold = false;
     for (int i = 0; i < 100; ++i) { controller.addLetter(L'h'); pump_for(1); }
-    require(controller.get_pinyin_length() == 40 && !sink.model.empty(), "Key repeat lost baseline or exceeded input limit");
+    require(controller.get_pinyin_length() == 90 && !sink.model.empty(), "Key repeat lost baseline or exceeded input limit");
     while (controller.get_pinyin_length() > 0) { controller.back(); pump_for(1); }
     controller.Reset(); pump_for(180);
     require(controller.getCandidateText(0).IsEmpty() && controller.getPinyin().IsEmpty(), "Held backspace was overwritten by a late result");
@@ -318,6 +357,7 @@ int main(int argc, char** argv)
         }
         check_refinement();
         check_prediction();
+        check_commit_acknowledgement();
         coral::tsf::ImeConfigSnapshot shortcuts;
         shortcuts.translation_enabled = true;
         require(shortcuts.translation_shortcut_available(), "Default = shortcut unavailable");

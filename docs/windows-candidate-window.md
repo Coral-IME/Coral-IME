@@ -8,6 +8,8 @@
 
 当前控制器实现中的 `kFetchSize` 为 60，`kPrefetchThreshold` 为 15，`kMaxCandidateCount` 为 600；这些是实现细节，调整时同时检查预取、边界和分页。初始页大小为 5。剪贴板列表有自己的页面和屏幕行数，不能直接套用拼音候选的分页值。
 
+单次拼音原始输入串最多 90 个字符（`kMaxPinyinLength`），手动输入的分隔符 `'` 也计入长度；达到上限后忽略后续字符。分隔符另有最多 20 个的限制。
+
 ## 渲染边界
 
 `src/platform/windows/renderer/candidate_view.h` 定义 `CandidateSkin` 等视图结构，`include/coral/composition/presentation_gateway.h` 定义跨组件交互。控制器负责业务状态与提交，渲染器负责窗口和绘制；改动快照字段时同时核对发送端、接收端与相关测试。

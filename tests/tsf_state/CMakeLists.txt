@@ -27,6 +27,29 @@ if(TARGET coraltsf64)
     # Compile the production controller with a fake dictionary and sink. Do not
     # initialize installed preferences, connect to the host or register the IME.
     set(_tsf_source ${CMAKE_SOURCE_DIR}/src/platform/windows/coraltsf)
+    add_executable(tsf_edit_boundaries_test tsf_edit_boundaries_test.cpp
+        ${_tsf_source}/src/editsession.cpp
+        ${_tsf_source}/src/displayattribute.cpp)
+    foreach(_property INCLUDE_DIRECTORIES COMPILE_DEFINITIONS LINK_LIBRARIES)
+        get_target_property(_value coraltsf64 ${_property})
+        set_property(TARGET tsf_edit_boundaries_test PROPERTY ${_property} "${_value}")
+    endforeach()
+    target_precompile_headers(tsf_edit_boundaries_test PRIVATE ${_tsf_source}/pch.h)
+    coral_target_common(tsf_edit_boundaries_test)
+    add_test(NAME tsf_edit_boundaries COMMAND tsf_edit_boundaries_test)
+    set_tests_properties(tsf_edit_boundaries PROPERTIES TIMEOUT 30)
+    add_executable(config_snapshot_test config_snapshot_test.cpp
+        ${_tsf_source}/src/configauthority.cpp)
+    foreach(_property INCLUDE_DIRECTORIES COMPILE_DEFINITIONS LINK_LIBRARIES)
+        get_target_property(_value coraltsf64 ${_property})
+        set_property(TARGET config_snapshot_test PROPERTY ${_property} "${_value}")
+    endforeach()
+    target_precompile_headers(config_snapshot_test PRIVATE ${_tsf_source}/pch.h)
+    coral_target_common(config_snapshot_test)
+    add_test(NAME config_snapshot COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/tools/checks/run_isolated.py
+        --user-root ${CMAKE_CURRENT_BINARY_DIR}/snapshot-users -- $<TARGET_FILE:config_snapshot_test> @USER_DIR@)
+    set_tests_properties(config_snapshot PROPERTIES TIMEOUT 30)
     add_executable(translation_controller_test translation_controller_test.cpp
         ${_tsf_source}/src/candidatecontroller.cpp
         ${_tsf_source}/src/candidatestatemodel.cpp

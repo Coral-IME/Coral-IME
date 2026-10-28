@@ -65,6 +65,14 @@ public:
 	int selectCol(CString& text, int column = -1);
 	int selectCurrentCandidate(CString& text);
 	int selectCandidateByIndex(CString& text, int index);
+    struct CommitState {
+        CString raw, holder, word, pinyin;
+        std::uint64_t generation = 0, id = 0;
+        bool learn = false;
+    };
+    CommitState prepare_commit();
+    bool commit_current(const CommitState& state) const;
+    bool complete_commit(const CommitState& state);
 
 	CString getPinyinHolder() const;
 	CString getPinyin() const { return m_rawInput; }
@@ -186,6 +194,7 @@ private:
 	int m_cursor = 0;
 	int m_selectedWordCount = 0;
 	std::uint64_t m_version = 0;
+    std::uint64_t commit_generation_ = 0, next_commit_id_ = 0, completed_commit_id_ = 0;
 	STATUS m_status = STATUS::NONE_STATUS;
 	InputMode m_inputMode = InputMode::IM_Normal;
 	bool m_doublepinyin = false;

@@ -31,6 +31,27 @@ SettingsConfig& SettingsConfig::getInstance()
 	return instance;
 }
 
+std::unique_ptr<SettingsConfig> SettingsConfig::read_only_snapshot(const std::string& path,
+    const std::unordered_map<std::string, std::string>& shared_values)
+{
+    SettingsIniManager store(path);
+    if (!store.is_loaded() || store.getAllKeys("settingsconfig").empty()) return {};
+    auto result = std::unique_ptr<SettingsConfig>(new SettingsConfig());
+    result->m_readOnlyValues = std::make_unique<std::unordered_map<std::string, std::string>>();
+    for (const auto& entry : store.getSection("placeholder"))
+        result->read_only_placeholders_.emplace(entry.first,
+            coral::preferences::ScalarTextCodec<int>::parse(entry.second));
+    for (const auto& entry : getDefaultSettingsConfigMap()) {
+        const auto& key = entry.first;
+        const auto& item = entry.second;
+        const auto shared = shared_values.find(key);
+        (*result->m_readOnlyValues)[key] = item.policy == StoragePolicy::SHARED_MEMORY &&
+            shared != shared_values.end() && !shared->second.empty() ? shared->second :
+            store.getSettingsConfig<std::string>(key, item.defaultValue);
+    }
+    return result;
+}
+
 void SettingsConfig::prepare_runtime_settings(const std::string& ini_file_path)
 {
     m_configStore.reset();
@@ -1056,10 +1077,24 @@ bool SettingsConfig::getIsWordToCharacterEnabled() const
 
 int SettingsConfig::getPlaceHolderValue(const std::string& key) const
 {
+    if (m_readOnlyValues) {
+        const auto found = read_only_placeholders_.find(key);
+        return found == read_only_placeholders_.end() ? 0 : found->second;
+    }
 	// 空防护：引擎初始化失败/未完成时（如 TSF 宿主 ActivateEx 在 start() 失败后仍执行
 	// setProcessName），m_configStore 可能为 nullptr。返回默认值 0，消费方 getCurrentPlaceholder()
 	// 的 switch 会落进 default 分支用空格占位符，不崩溃且不破坏输入流程。
 	if (!m_configStore)
 		return 0;
 	return m_configStore->getIniValueAs<int>("placeholder", key, 0);
+}
+
+std::unordered_map<std::string, int> SettingsConfig::get_placeholder_schemes() const
+{
+    if (m_readOnlyValues) return read_only_placeholders_;
+    std::unordered_map<std::string, int> result;
+    if (m_configStore)
+        for (const auto& entry : m_configStore->getSection("placeholder"))
+            result.emplace(entry.first, coral::preferences::ScalarTextCodec<int>::parse(entry.second));
+    return result;
 }

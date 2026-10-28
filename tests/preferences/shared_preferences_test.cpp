@@ -45,6 +45,11 @@ void set_flag(char* root, std::size_t offset, std::uint32_t value) {
 }
 
 void rejected(SharedMemoryConfig& config) {
+    std::unordered_map<std::string, std::string> values{{"sentinel", "unchanged"}};
+    std::uint64_t generation = 42;
+    check(!config.read_snapshot(values, generation) && values.size() == 1 &&
+        values.at("sentinel") == "unchanged" && generation == 42,
+        "invalid snapshot preserves output and generation");
     check(config.getConfig("probe").empty(), "invalid data rejects single read");
     check(config.getAllConfigMap().empty(), "invalid data rejects snapshot read");
     check(!config.setConfig("probe", "new"), "invalid data rejects single write");
@@ -161,6 +166,12 @@ int main(int argc, char** argv) {
         }
         SharedMemoryConfig reader;
         check(reader.initialize() && reader.getConfig("probe") == "old", "second mapping reads configuration");
+        SharedMemoryConfig observer;
+        std::unordered_map<std::string, std::string> observed;
+        std::uint64_t observed_generation = 1;
+        check(observer.open_existing() && observer.read_snapshot(observed, observed_generation) &&
+            observed.at("probe") == "old" && !(observed_generation & 1),
+            "read-only connection returns one stable snapshot and generation");
         check(writer.setConfig("probe", "new") && reader.getConfig("probe") == "new", "single write publishes value");
         check(writer.setConfigs({{"probe", "batch"}}) && reader.getAllConfigMap().at("probe") == "batch", "batch publishes snapshot");
         check(writer.setConfig(std::string(63, 'k'), std::string(255, 'v')) &&

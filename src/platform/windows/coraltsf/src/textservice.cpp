@@ -78,6 +78,9 @@ HRESULT CTextService::FinalConstruct()
 
 void CTextService::FinalRelease()
 {
+	m_configAuthority.stop();
+    config_refresh_scheduled_ = false;
+    m_tsfThreadContext.dispatcher().shutdown();
 	m_settingMenu.hide();
 	DELETE_P(m_pThreadMgrEventSink);
 	DELETE_P(m_pThreadFocusSink);
@@ -100,6 +103,8 @@ STDAPI CTextService::Activate(ITfThreadMgr* ptim, TfClientId tid)
 
 STDAPI CTextService::Deactivate(void)
 {
+	m_configAuthority.stop();
+    config_refresh_scheduled_ = false;
 	LOG_INFO_W(L"[CTextService::Deactivate] start.");
 	m_settingMenu.hide();
 	if (m_clientId == TF_CLIENTID_NULL && !m_pThreadMgr)
@@ -199,7 +204,9 @@ STDAPI CTextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD dwFlag
 	}
 
 	// 引擎连接与会话创建发生在按键处理时。
+	m_configAuthority.initialize((hlp::getLocalLowCoralPinyinPath() / "config" / "coralpinyinConfig.ini").string());
 	refreshConfigSnapshot(true);
+	schedule_config_refresh();
 	m_runtimeMode.reset(*m_configSnapshot, m_configSnapshot->defaultEnglish);
 	m_tsfThreadContext.contexts().clear();
 	{
@@ -217,7 +224,8 @@ STDAPI CTextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD dwFlag
 		showFloatingToolbar(TRUE);
 		if (m_pEditMgr)
 		{
-			m_pEditMgr->setProcessName(m_processName);
+			m_pEditMgr->setProcessName(m_processName,
+                m_configSnapshot->placeholder_scheme(std::string(CT2A(m_processName, CP_UTF8))));
 		}
 		hr = S_OK;
 		LOG_INFO_W(L"[CTextService::ActivateEx] success.");
@@ -351,6 +359,8 @@ STDAPI CTextService::OnCompositionTerminated(TfEditCookie ecWrite, ITfCompositio
 	// 触发此回调，因此绝不能在这里二次结束组串。
 	coral::tsf::ContextState* state =
 		m_tsfThreadContext.contexts().findByComposition(pComposition);
+    // 主动结束由编辑完成回调消费输入；此处不能先清空更新后的本地状态。
+    if (state && state->compositionController().internal_end()) return S_OK;
 	if (state && state->compositionController().clearTerminatedComposition(pComposition))
 	{
 		state->inputState().compositionEnded = true;
@@ -469,9 +479,8 @@ HRESULT CTextService::handleChinesePunctuation(WPARAM wParam)
 	setKeepPlaceholder(true);
 	if (m_pEditMgr)
 	{
-		m_pEditMgr->insertText(m_clientId, isFullWidth() ? hlp::HalfToFull(insertText) : insertText);
+		return submit_text(isFullWidth() ? hlp::HalfToFull(insertText) : insertText);
 	}
-	hideCandidateDlg(TRUE);
 	return S_OK;
 }
 
@@ -532,8 +541,7 @@ HRESULT CTextService::commitRawPinyin()
 	if (raw.IsEmpty())
 		return S_OK;
 	if (m_pEditMgr)
-		m_pEditMgr->insertText(m_clientId, raw);
-	hideCandidateDlg(TRUE);
+		return submit_text(raw, false);
 	return S_OK;
 }
 
@@ -548,9 +556,8 @@ HRESULT CTextService::handleShiftKey()
 		raw.Remove(_T('\''));
 		if (!raw.IsEmpty() && m_pEditMgr)
 		{
-			m_pEditMgr->insertText(m_clientId, raw);
+			submit_text(raw, false, false, false);
 		}
-		hideCandidateDlg(TRUE);
 		// 标记 preInput，阻止 Shift 抬起时 changeLanguageModeUp 切换中英文模式
 		m_pKeyEventSink->setPreInput(true);
 	}
@@ -834,7 +841,21 @@ HRESULT CTextService::startComposition(ITfContext* pContext, WPARAM wParam, bool
 {
 	if (m_pEditMgr)
 	{
-		if (!m_pEditMgr->exsitComposition())
+        if (m_pEditMgr->has_committed_text()) {
+            const auto* state = activeContextState();
+            if (!state) return E_ABORT;
+            const auto token = state->token();
+            const auto manager = m_pEditMgr->shared_from_this();
+            const auto focus = manager->focus_epoch();
+            // 只重试结束旧组串，绝不重写已提交的文字。
+            return manager->end(m_clientId, [this, token, manager, focus](const EditResult& result) {
+                auto* current = m_tsfThreadContext.contexts().find(token);
+                if (!result.composition_ended || !current || !current->focused() ||
+                    activeContextState() != current || manager->focus_epoch() != focus) return;
+                resume_composition(token, manager);
+            });
+        }
+		if (!m_pEditMgr->exsitComposition() && !m_pEditMgr->start_pending())
 		{
 			auto& input = contextInputState();
 			input.compositionEnded = false;
@@ -946,21 +967,7 @@ HRESULT CTextService::invokeKeyHandler(ITfContext* pContext, WPARAM wParam, LPAR
 			CString pairText = leftChar;
 			if (!rightChar.IsEmpty())
 				pairText += rightChar;
-			m_pEditMgr->insertText(m_clientId, pairText);
-			hideCandidateDlg();
-
-			// 如果有配对符号，标记需要在 Shift 松开后发送左键
-			if (!rightChar.IsEmpty())
-			{
-				if(m_pKeyEventSink->isShiftDown())
-					contextInputState().needSendLeftKey = true;
-				else
-				{
-					sendLeftKey(pContext);
-				}
-			}
-
-			return S_OK;
+            return submit_text(pairText, false, !rightChar.IsEmpty(), false);
 		}
 	}
 
@@ -1218,9 +1225,10 @@ HRESULT CTextService::invokeKeyHandler(ITfContext* pContext, WPARAM wParam, LPAR
 		if (m_pEditMgr)
 		{
 			if (contextInputState().fullWidthInChineseMode)
-				m_pEditMgr->insertText(m_clientId, hlp::HalfToFull(insertText));
+				return submit_text(hlp::HalfToFull(insertText), true, false, false);
 			else
-				m_pEditMgr->insertText(m_clientId, (wParam == VK_RETURN && isFullWidth()) ? hlp::HalfToFull(insertText) : insertText);
+				return submit_text((wParam == VK_RETURN && isFullWidth()) ? hlp::HalfToFull(insertText) : insertText,
+                    true, false, false);
 		}
 	}
 	hideCandidateDlg();
@@ -1378,28 +1386,9 @@ HRESULT CTextService::invokeFullWidthCharactersKeyHandler(ITfContext* pContext, 
 	// 插入到上下文
 	if (!selected_text.IsEmpty())
 	{
-		if (m_pEditMgr)
-		{
-			m_pEditMgr->insertText(m_clientId, selected_text);
-		}
-		hideCandidateDlg();
-
-		// 【符号自动补全】如果插入了配对符号，光标左移
-		if (m_configSnapshot->autoSymbolCompletion && isAutoClosePairKey(wParam))
-		{
-			CString rightChar = getAutoClosePairChar(selected_text.Left(1));
-			if (!rightChar.IsEmpty())
-			{
-				if (m_pKeyEventSink->isShiftDown())
-					contextInputState().needSendLeftKey = true;
-				else
-				{
-					sendLeftKey(pContext);
-				}
-			}
-		}
-
-		return S_OK;
+        const bool move_left = m_configSnapshot->autoSymbolCompletion && isAutoClosePairKey(wParam) &&
+            !getAutoClosePairChar(selected_text.Left(1)).IsEmpty();
+        return submit_text(selected_text, false, move_left, false);
 	}
 
 	return S_FALSE;
@@ -1449,7 +1438,8 @@ HRESULT CTextService::selectContextController(ITfContext* context)
 		return FAILED(hr) ? hr : E_FAIL;
 	CEditMgr* controller = &state->compositionController();
 	if (m_pEditMgr != controller)
-		controller->setProcessName(m_processName);
+		controller->setProcessName(m_processName, m_configSnapshot ?
+            m_configSnapshot->placeholder_scheme(std::string(CT2A(m_processName, CP_UTF8))) : 0);
 	m_pEditMgr = controller;
 	m_pCandidateDlg = &state->candidateController();
 	m_pCandidateListUIElement = &state->candidateUIElement();
@@ -1503,6 +1493,8 @@ void CTextService::clearActiveContext()
 
 void CTextService::prepareContextClose(coral::tsf::ContextState& state)
 {
+    state.compositionController().set_edit_focus(false);
+    state.compositionController().invalidate_edits();
 	// 在 ContextState 及其控制器仍然存活时释放所有宿主可见对象。
 	// 特别是不能在其底层 Context 消失后
 	// 仍保留 UILess 元素的注册。
@@ -1538,8 +1530,12 @@ coral::composition::SessionToken CTextService::activeEngineSession() const
 void CTextService::refreshConfigSnapshot(bool force)
 {
 	auto next = m_configAuthority.refresh(force);
+    schedule_config_refresh();
 	if (next == m_configSnapshot) return;
 	m_configSnapshot = std::move(next);
+    if (m_pEditMgr)
+        m_pEditMgr->setProcessName(m_processName,
+            m_configSnapshot->placeholder_scheme(std::string(CT2A(m_processName, CP_UTF8))));
 	if (m_pCandidateDlg)
 		m_pCandidateDlg->setConfigSnapshot(m_configSnapshot);
 	if (m_configSnapshot)
@@ -1547,7 +1543,20 @@ void CTextService::refreshConfigSnapshot(bool force)
 		if (const auto session = activeEngineSession())
 			session_bridge_->apply_settings(session,
 				m_configSnapshot->engineConfig(m_runtimeMode.full_width(), m_runtimeMode.traditional()));
+		m_remoteToolbarVisible = toolbar_requested_visible_ && m_configSnapshot->floatingToolbarOpen;
+        publishToolbarSnapshot(m_remoteToolbarVisible);
 	}
+}
+
+void CTextService::schedule_config_refresh()
+{
+    if (config_refresh_scheduled_ || !m_pThreadMgr || m_clientId == TF_CLIENTID_NULL) return;
+    config_refresh_scheduled_ = m_tsfThreadContext.dispatcher().postServiceDelayed(
+        m_tsfThreadContext.contexts().serviceInstanceId(), 1, [this] {
+            config_refresh_scheduled_ = false;
+            m_configAuthority.request_refresh();
+            refreshConfigSnapshot();
+        }, 250);
 }
 
 void CTextService::syncEngineConfig()
@@ -1989,9 +1998,8 @@ void CTextService::updateLanguageMode(ITfContext* pic, bool updateMode) // 切�
 		m_pCandidateDlg->selectCol(inputText);
 		if (m_pEditMgr)
 		{
-			m_pEditMgr->insertText(m_clientId, isFullWidth() ? hlp::HalfToFull(inputText) : inputText);
+			submit_text(isFullWidth() ? hlp::HalfToFull(inputText) : inputText);
 		}
-		hideCandidateDlg(TRUE);
 	}
 	if (updateMode) // 当按shift + ctrl的时候会切换其他输入法，此时不让模式更换
 	{
@@ -2227,6 +2235,7 @@ void CTextService::destroyCandidateDlg()
 
 void CTextService::showFloatingToolbar(BOOL show)
 {
+    toolbar_requested_visible_ = show != FALSE;
 	// 焦点可能在没有按键事件的情况下恢复。先刷新再发布，使工具栏
 	// 使用本 TSF 宿主失活期间更改过的设置。
 	if (show)
@@ -2362,6 +2371,21 @@ bool CTextService::hasThreadFocus() const
 {
 	BOOL focused = TRUE;
 	return !m_pThreadMgr || FAILED(m_pThreadMgr->IsThreadFocus(&focused)) || focused;
+}
+
+bool CTextService::edit_focus_current(ITfContext* context) const
+{
+    if (!m_pThreadMgr || !context || m_clientId == TF_CLIENTID_NULL) return false;
+    BOOL focused = FALSE;
+    if (FAILED(m_pThreadMgr->IsThreadFocus(&focused)) || !focused) return false;
+    CComPtr<ITfDocumentMgr> document;
+    if (FAILED(m_pThreadMgr->GetFocus(&document)) || !document) return false;
+    CComPtr<ITfContext> top;
+    if (FAILED(document->GetTop(&top)) || !top) return false;
+    CComPtr<IUnknown> expected, actual;
+    if (FAILED(context->QueryInterface(IID_PPV_ARGS(&expected))) ||
+        FAILED(top->QueryInterface(IID_PPV_ARGS(&actual)))) return false;
+    return expected == actual;
 }
 
 void CTextService::publishCandidateSnapshot()
@@ -2675,7 +2699,7 @@ void CTextService::openSettingsMenuFromUi(const RECT* anchorRect)
 void CTextService::refreshFloatingToolbarPreference()
 {
 	refreshConfigSnapshot(true);
-	showFloatingToolbar(sConfig->getIsFloatingToolbarOpen() ? TRUE : FALSE);
+	showFloatingToolbar(hasThreadFocus() ? TRUE : FALSE);
 }
 
 STDMETHODIMP CTextService::GetDisplayName(BSTR* pbstrName)
@@ -2762,14 +2786,68 @@ HRESULT CTextService::finishCandidateSelection(
 		return S_OK; // 部分上屏：剩余组串保持活动。
 
 	const bool verbatim = m_pCandidateDlg && m_pCandidateDlg->takeVerbatimCommit();
-	if (m_pEditMgr)
-		m_pEditMgr->insertText(m_clientId, isFullWidth() && !verbatim ? hlp::HalfToFull(text) : text);
-	hideCandidateDlg(TRUE);
-	return S_OK;
+    return submit_text(isFullWidth() && !verbatim ? hlp::HalfToFull(text) : text);
+}
+
+HRESULT CTextService::submit_text(const CString& text, bool learn, bool move_left, bool clear_keys)
+{
+    auto* state = activeContextState();
+    if (!state || !m_pEditMgr || m_pEditMgr->commit_pending()) return E_PENDING;
+    const auto token = state->token();
+    auto commit = state->candidateController().prepare_commit();
+    commit.learn = commit.learn && learn;
+    const auto manager = m_pEditMgr->shared_from_this();
+    const auto focus = manager->focus_epoch();
+    return manager->insertText(m_clientId, text,
+        [this, token, commit, manager, focus, move_left, clear_keys](const EditResult& result) {
+            if (!result.text_written) return;
+            auto* current = m_tsfThreadContext.contexts().find(token);
+            if (!current) return;
+            auto completed = commit;
+            const bool still_focused = activeContextState() == current && current->focused() &&
+                manager->focus_epoch() == focus && result.status != E_ABORT;
+            completed.learn = completed.learn && still_focused;
+            const bool empty = current->candidateController().complete_commit(completed);
+            current = m_tsfThreadContext.contexts().find(token);
+            if (!current || activeContextState() != current || !current->focused() ||
+                manager->focus_epoch() != focus) return;
+            if (empty) hideCandidateDlg(clear_keys ? TRUE : FALSE);
+            else if (result.composition_ended) resume_composition(token, manager);
+            current = m_tsfThreadContext.contexts().find(token);
+            CComPtr<ITfContext> context = current ? current->context() : nullptr;
+            if (move_left && current && activeContextState() == current && current->focused() &&
+                manager->focus_epoch() == focus && result.composition_ended && edit_focus_current(context)) {
+                current = m_tsfThreadContext.contexts().find(token);
+                if (!current || activeContextState() != current || !current->focused() ||
+                    manager->focus_epoch() != focus) return;
+                if (m_pKeyEventSink->isShiftDown()) contextInputState().needSendLeftKey = true;
+                else sendLeftKey(context);
+            }
+        }, [this, token, commit] {
+            const auto* current = m_tsfThreadContext.contexts().find(token);
+            return current && current->focused() && current->candidateController().commit_current(commit);
+        });
+}
+
+void CTextService::resume_composition(const coral::tsf::ContextToken& token,
+    const std::shared_ptr<CEditMgr>& manager)
+{
+    auto* state = m_tsfThreadContext.contexts().find(token);
+    if (!state || !state->focused() || activeContextState() != state) return;
+    const CString holder = state->candidateController().getPinyinHolder();
+    if (holder.IsEmpty()) return;
+    auto& input = state->inputState();
+    input.compositionEnded = false;
+    input.layoutChanged = false;
+    input.layoutChangeCount = 0;
+    input.layoutChangeIndex = 0;
+    manager->updateAccumulatedPinyin(holder, m_clientId);
+    manager->start(m_clientId, state->context(), this);
 }
 
 HRESULT CTextService::commitCurrentCandidate()
 {
+    if (m_pEditMgr && m_pEditMgr->commit_pending()) return E_PENDING;
 	if (!isCandidateVisiable())
 		return S_OK;
 	CString text;
@@ -2779,6 +2857,7 @@ HRESULT CTextService::commitCurrentCandidate()
 
 HRESULT CTextService::commitCandidateByIndex(int candidateIndex)
 {
+    if (m_pEditMgr && m_pEditMgr->commit_pending()) return E_PENDING;
 	if (!isCandidateVisiable())
 		return S_OK;
 	CString text;
@@ -2788,6 +2867,7 @@ HRESULT CTextService::commitCandidateByIndex(int candidateIndex)
 
 HRESULT CTextService::commitCandidateByVisualColumn(int visualColumn)
 {
+    if (m_pEditMgr && m_pEditMgr->commit_pending()) return E_PENDING;
 	if (!isCandidateVisiable())
 		return S_OK;
 	CString text;
@@ -2819,11 +2899,7 @@ void CTextService::selectCharacterFromWord(int characterIndex)
 	if (isCandidateVisiable())
 	{
 		CString currentWord;
-		int res = m_pCandidateDlg->selectCurrentCandidate(currentWord);
-		if (res == 1)
-			m_pCandidateDlg->adjustTodayWord(1 - currentWord.GetLength());
-		else
-			m_pCandidateDlg->adjustTodayWord(1);
+		m_pCandidateDlg->selectCurrentCandidate(currentWord);
 		if (currentWord.GetLength() > 1)
 		{
 			int actualIndex = characterIndex;
@@ -2837,18 +2913,16 @@ void CTextService::selectCharacterFromWord(int characterIndex)
 				CString selectedChar = currentWord.Mid(actualIndex, 1);
 				if (m_pEditMgr)
 				{
-					m_pEditMgr->insertText(m_clientId, isFullWidth() ? hlp::HalfToFull(selectedChar) : selectedChar);
+					submit_text(isFullWidth() ? hlp::HalfToFull(selectedChar) : selectedChar, false, false, false);
 				}
-				hideCandidateDlg();
 			}
 		}
 		else if (currentWord.GetLength() == 1)
 		{
 			if (m_pEditMgr)
 			{
-				m_pEditMgr->insertText(m_clientId, isFullWidth() ? hlp::HalfToFull(currentWord) : currentWord);
+				submit_text(isFullWidth() ? hlp::HalfToFull(currentWord) : currentWord, false, false, false);
 			}
-			hideCandidateDlg();
 		}
 	}
 }

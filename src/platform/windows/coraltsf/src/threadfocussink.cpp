@@ -15,6 +15,7 @@ STDAPI CThreadFocussink::OnSetThreadFocus(void)
 
 STDAPI CThreadFocussink::OnKillThreadFocus(void)
 {
+    m_pTextService->m_tsfThreadContext.contexts().setFocused(nullptr);
 	m_pTextService->resetConditionWord();
 	m_pTextService->showFloatingToolbar(FALSE);
 	LOG_TRACE_W(L"[CThreadFocussink::OnKillThreadFocus]");
