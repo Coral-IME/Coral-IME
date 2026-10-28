@@ -17,8 +17,8 @@ constexpr int kPrefetchThreshold = 15;
 constexpr int kMaxCandidateCount = 600;
 constexpr UINT kCandidateLoadComplete = WM_APP + 0x35B;
 constexpr UINT_PTR kRefinementTimer = 0xCA71;
-constexpr UINT kRefinementSettleMs = 120;
-constexpr UINT kRefinementPollMs = 25;
+constexpr UINT kRefinementSettleMs = 80;
+constexpr UINT kRefinementPollMs = 10;
 constexpr wchar_t kCandidateLoaderClass[] = L"CoralPinyin.CandidateLoader";
 constexpr std::size_t kClipboardPageSize = 10;
 // 与渲染器的列表行数保持一致，使 PageUp/PageDown 恰好移动一屏。
