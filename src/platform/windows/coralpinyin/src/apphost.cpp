@@ -108,12 +108,12 @@ void appShutdown()
 
 bool appStartSpeech()
 {
-    // 语音输入临时屏蔽：不创建宿主、键盘监听或录音线程，保留代码以便恢复。
+    // 总开关统一控制宿主、键盘监听与设置入口，便于再次临时屏蔽。
     if (!coral::speech::win32::kSpeechFeatureEnabled) return true;
     coral::speech::win32::SpeechServices services;
     services.settings = [] {
         return coral::speech::win32::SpeechSettings{sConfig->get_speech_enabled(), sConfig->get_speech_key_configured(),
-            sConfig->get_speech_shortcut(), sConfig->get_speech_credential_revision(), sConfig->get_speech_push_to_talk()};
+            sConfig->get_speech_shortcut(), sConfig->get_speech_credential_revision()};
     };
     services.credentials = [] {
         auto pair = sConfig->get_speech_credentials();

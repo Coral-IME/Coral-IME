@@ -21,11 +21,13 @@ namespace
 	constexpr int kPathCandidateLimit = 32;
 	constexpr int kStateBestCap = 8;
 
-    double model_input_penalty(const coral::phonetics::CandidateEdgePayload& data) {
+    double model_input_penalty(const coral::phonetics::CandidateEdgePayload& data,
+        const coral::phonetics::ContextScorer& model) {
+        const double reading_prior = model.reading_log_prior(data.phrase_id);
         const auto& sequence = data.pinyin_sequence();
         if (sequence.is_fuzzy_match_)
-            return sequence.sub_sequences_.empty() ? kFuzzyPenaltyQuan : kFuzzyPenaltyJian;
-        return sequence.is_edit_corrected_ ? kEditPenalty : 0.0;
+            return reading_prior + (sequence.sub_sequences_.empty() ? kFuzzyPenaltyQuan : kFuzzyPenaltyJian);
+        return reading_prior + (sequence.is_edit_corrected_ ? kEditPenalty : 0.0);
     }
 
     bool is_full_dictionary_arc(const coral::phonetics::CandidateArc& arc, int end) {
@@ -275,7 +277,7 @@ bool coral::phonetics::CandidateDecoder::init(const coral::phonetics::CandidateL
 					? std::max(arc.data.weight, model->best_weight(arc.data.phrase_id)) : arc.data.weight;
                 if (const auto* surface = languageModel.surface_model()) {
                     const double bound = surface->phrase_upper_bound(arc.data.phrase_id);
-                    if (!english && std::isfinite(bound)) weight = bound + model_input_penalty(arc.data);
+                    if (!english && std::isfinite(bound)) weight = bound + model_input_penalty(arc.data, languageModel);
                 }
 				const double step = std::max(0.0, -static_cast<double>(weight));
 				heuristic[position] = std::min(heuristic[position], step + heuristic[arc.to]);
@@ -561,7 +563,7 @@ bool coral::phonetics::CandidateDecoder::find_best_paths(
                 data.phrase_id < uni_size && uni[data.phrase_id].next >= 0);
             if (surface) {
                 if (inModel) {
-                    stepCost = std::max(0.0, -surface_score.log_probability - model_input_penalty(data));
+                    stepCost = std::max(0.0, -surface_score.log_probability - model_input_penalty(data, *language_model_));
                     nextGState = surface_score.next_state;
                     bigramHit = surface_score.first_arc_hit;
                 } else {
@@ -626,7 +628,7 @@ bool coral::phonetics::CandidateDecoder::find_best_paths(
                 if (surface) {
                     coral::language_model::PhraseScore initial;
                     surface->score_phrase(0, data.phrase_id, initial);
-                    ordinary_cost = -initial.log_probability - model_input_penalty(data);
+                    ordinary_cost = -initial.log_probability - model_input_penalty(data, *language_model_);
                 } else ordinary_cost = std::max(0.0, -static_cast<double>(uni[data.phrase_id].weight));
                 stepCost = condition_weight(ordinary_cost, stepCost);
             }
@@ -819,7 +821,7 @@ bool coral::phonetics::CandidateDecoder::get_parsed_res(
                         const auto context = surface->phrase_end(condition_id_);
                         surface->score_phrase(context, data.phrase_id, conditional);
                         direct_weight = condition_weight(ordinary.log_probability, conditional.log_probability) +
-                            model_input_penalty(data);
+                            model_input_penalty(data, *language_model_);
                     }
                 }
             }

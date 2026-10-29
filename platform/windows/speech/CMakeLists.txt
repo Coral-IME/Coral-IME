@@ -2,5 +2,5 @@ add_library(coral_windows_speech STATIC microphone_capture.cpp speech_runtime.cp
 add_library(coral::windows_speech ALIAS coral_windows_speech)
 target_include_directories(coral_windows_speech PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(coral_windows_speech PRIVATE UNICODE _UNICODE)
-target_link_libraries(coral_windows_speech PUBLIC coral::speech coral::foundation PRIVATE Winmm User32 Gdi32 Comctl32)
+target_link_libraries(coral_windows_speech PUBLIC coral::speech coral::foundation PRIVATE Winmm User32 Gdi32 Comctl32 Ole32 OleAut32 Uuid)
 coral_target_common(coral_windows_speech)

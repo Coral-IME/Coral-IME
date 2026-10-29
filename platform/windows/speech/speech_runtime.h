@@ -8,9 +8,10 @@
 #include <string>
 #include <windows.h>
 namespace coral::speech::win32 {
-// 临时屏蔽语音输入：保留实现、配置与测试，仅隐藏设置入口并停止运行入口；
-// 恢复时改回 true 并重新构建。
-inline constexpr bool kSpeechFeatureEnabled = false;
+// 开发期开放语音；以后改为 false 并重新构建即可统一屏蔽。
+inline constexpr bool kSpeechFeatureEnabled = true;
+// 大窗及未经设计的悬浮栏点击入口暂不开放。
+inline constexpr bool kSpeechToolbarEnabled = false;
 inline constexpr wchar_t kSpeechHostClass[] = L"CoralPinyin.SpeechHost.v1";
 inline constexpr wchar_t kSpeechWindowClass[] = L"CoralPinyin.SpeechWindow.v1";
 inline constexpr wchar_t kSpeechHostTitle[] = L"CoralSpeech";
@@ -22,21 +23,24 @@ inline constexpr UINT kSpeechOpenMessage = WM_APP + 0x521;
 inline constexpr UINT kSpeechTestMessage = WM_APP + 0x522;
 inline constexpr UINT kSpeechPushToTalkBeginMessage = WM_APP + 0x523;
 inline constexpr UINT kSpeechPushToTalkEndMessage = WM_APP + 0x524;
+inline constexpr UINT kSpeechCancelMessage = WM_APP + 0x525;
 struct SpeechSettings {
     bool enabled = false;
     bool configured = false;
     std::string shortcut = "ctrl_win_shift";
     std::string revision;
-    // 开启后按住 Ctrl+Win 直接开始收集，松开结束并复用既有识别流程。
-    bool push_to_talk = false;
 };
 struct SpeechServices {
     std::wstring instance_name = speech_host_title();
     bool enable_keyboard = true;
+    // 自动测试可禁止真实键盘注入，只检查隔离的剪贴板替身。
+    bool enable_text_insertion = true;
     std::function<SpeechSettings()> settings;
     std::function<TencentCredentials()> credentials;
     // 测试可替换识别后端，默认使用真实腾讯云模块。
     std::function<Result(const AudioClip&, const TencentCredentials&, const RequestControl&)> recognize;
+    // 测试替换剪贴板写入，隔离用户的真实剪贴板。
+    std::function<bool(const std::wstring&)> copy_text;
     std::function<MicrophoneInfo()> microphone;
     std::function<CaptureResult(const std::atomic<bool>&, const std::atomic<bool>&, unsigned,
         const std::function<void(CaptureProgress)>&)> capture;

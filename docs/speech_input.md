@@ -1,11 +1,11 @@
 # 语音输入基础模块
 
-跨平台核心调用腾讯云 [SentenceRecognition](https://cloud.tencent.com/document/product/1093/35646)，录音结束后一次提交并返回完整 UTF-8 文字，不做流式识别。核心不依赖 UI 或麦克风驱动；新增的 [Windows 接入](speech_windows.md) 单独提供设置页、快捷键、悬浮栏入口、麦克风采集与桌面小窗，把录音交给 `AudioClip` 后复用该核心。Windows 接入自 2026-10-20 起由 `kSpeechFeatureEnabled` 临时屏蔽，跨平台核心、工具和测试保留不变。
+跨平台核心调用腾讯云 [SentenceRecognition](https://cloud.tencent.com/document/product/1093/35646)，录音结束后一次提交并返回完整 UTF-8 文字，不做流式识别。核心不依赖 UI 或麦克风驱动；新增的 [Windows 接入](speech_windows.md) 单独提供设置页、快捷键、悬浮栏入口、麦克风采集与桌面小窗，把录音交给 `AudioClip` 后复用该核心。Windows 开发构建自 2026-10-28 恢复按住快捷键入口，大窗及悬浮栏点击入口继续屏蔽；总开关仍为 `kSpeechFeatureEnabled`。
 
 ## 目录与依赖
 
 - 公共契约：`include/coral/speech/recognizer.h`，命名空间 `coral::speech`。
-- 快捷键与按下发言规则：`include/coral/speech/shortcut.h`，仅保存按键状态，不记录文字。`PushToTalkTracker` 以 Ctrl+Win 按下开始、松开或按下其他键结束，供 Windows 键盘监听复用。
+- 快捷键与按下发言规则：`include/coral/speech/shortcut.h`，仅保存按键状态，不记录文字。`PushToTalkTracker` 支持所有已配置组合，完整按下开始、必要键松开结束，额外按键取消；供 Windows 键盘监听复用。
 - 腾讯云适配：`include/coral/speech/tencent_recognizer.h` 与 `modules/speech/`，构建目标 `coral::speech`。
 - 原生联调工具：`tools/native/speech_probe/`，目标 `coral_speech_probe`。
 - 测试：`tests/speech/`，固定签名、人工 WAV/PCM、返回协议与失败边界。

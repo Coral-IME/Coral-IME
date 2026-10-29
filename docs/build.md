@@ -14,6 +14,8 @@ ZIP 使用 [miniz 3.1.2](https://github.com/richgel999/miniz/releases/tag/3.1.2)
 
 打包脚本的 `--version` 必须与本次编译版本一致，脚本会写入包内 `config/coralpinyinConfig.ini`；不能把公共配置模板的占位版本当作正式包版本。
 
+已离线生成并验证的 CSLM0001 模型可通过 `tools/release/package_windows.py --precompiled-tables-dir <配套二进制目录>` 打包。目录须同时含 `mainlexicon.coral` 和 `languagemodel.coral`。默认生成CSTPACK1无损紧凑包，安装端由`coral_table_restore.exe`还原；打包前运行相同工具核对两份文件的SHA-256与原生加载，不从旧CSV重新计算模型。辅助运行资源仍须由完整外置运行包提供。`--compact-tables-bundle`可复用显式紧凑包，但仍须完成原生还原和摘要核验；`--precompiled-tables-storage direct`仅供直接携带二进制的诊断对照。格式及失败处理见[紧凑运行资源](compact_runtime_tables.md)。
+
 ## 开关
 
 | CMake 变量 | 默认值 | 用途 |

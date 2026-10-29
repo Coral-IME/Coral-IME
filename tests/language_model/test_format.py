@@ -91,6 +91,36 @@ class FormatTests(unittest.TestCase):
             result = subprocess.run([NATIVE, str(model), str(lexicon), str(bad)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
 
+            if DECODER:
+                # 合法词典字节夹具：同一字两个无调读音，罕见读音故意放更多别名。
+                pool = bytearray()
+                def text(value):
+                    raw = value.encode('utf-8'); offset = len(pool)
+                    pool.extend(raw + b'\0'); return offset, len(raw)
+                key_at = text('a'); common_at = text('jia'); rare_at = text('yi')
+                word_at = text('甲'); other_at = text('乙')
+                entries = []
+                for identity, reading, frequency, word_value in [
+                        (12, common_at, 900, word_at), (13, rare_at, 100, word_at),
+                        (13, rare_at, 100, word_at), (13, rare_at, 100, word_at),
+                        (14, common_at, 300, other_at)]:
+                    entries.append(struct.pack('<5I2fI', *word_value, *reading, identity,
+                        math.log(frequency / 1e9), 0., 1))
+                real_lexicon = root / 'pronunciations.coral'
+                header = struct.pack('<8s14I', b'KNAPRGB1', 2, 1, len(entries), len(pool),
+                    64, 128, 320, 320 + len(pool), *([0] * 6))
+                key = struct.pack('<Q4I', int.from_bytes(b'a' + bytes(7), 'big'),
+                    *key_at, 0, len(entries))
+                real_lexicon.write_bytes(header + key + bytes(40) + b''.join(entries) + bytes(32) + pool)
+                pronunciation_data = encode_model(tokens, [(1, math.log(.2)), (2, math.log(.6))],
+                    [(12, 0, 1), (13, 1, 1), (14, 2, 1)], [1,2,3], 3,
+                    hashlib.sha256(real_lexicon.read_bytes()).digest())
+                pronunciation_model = root / 'pronunciations-model.coral'
+                pronunciation_model.write_bytes(pronunciation_data)
+                decoded = subprocess.run([DECODER, str(pronunciation_model), str(real_lexicon),
+                    str(bad), 'reading-priors'], capture_output=True, text=True)
+                self.assertEqual(decoded.returncode, 0, decoded.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()

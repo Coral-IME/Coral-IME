@@ -1,5 +1,6 @@
 """人工模型检查漏带、摘要不符和无模型兼容行为。"""
 import copy
+import hashlib
 from pathlib import Path
 import sys
 import tempfile
@@ -8,7 +9,8 @@ import unittest
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tools/release'))
 sys.path.insert(0,str(ROOT/'tests/language_model'))
-from package_windows import package_character_model,stamp_package_version
+from package_windows import package_character_model,stamp_package_version,precompiled_tables_info
+from surface_model_format import encode_model
 from runtime_manifest import character_model_info
 from test_character_model import fixture
 from character_model_format import quantize_model
@@ -72,6 +74,21 @@ class CharacterPackageTest(unittest.TestCase):
             path.write_bytes(raw)
             with self.assertRaises(ValueError):stamp_package_version(path,'1.0.0.5')
             self.assertEqual(path.read_bytes(),raw)
+
+    def test_precompiled_pair_rejects_wrong_dictionary_and_damaged_body(self):
+        # 绑定检查不能只核对两个独立文件各自的摘要。
+        lex=self.root/'mainlexicon.coral';lex.write_bytes(b'isolated test dictionary')
+        model=self.root/'languagemodel.coral'
+        raw=encode_model([(0.,0.,0.,0,0)],[],[(1,0,1)],[1],1,hashlib.sha256(lex.read_bytes()).digest())
+        model.write_bytes(raw)
+        self.assertEqual(precompiled_tables_info(self.root)['states'],1)
+        lex.write_bytes(b'another dictionary')
+        with self.assertRaisesRegex(ValueError,'different dictionary'):precompiled_tables_info(self.root)
+        lex.write_bytes(b'isolated test dictionary')
+        model.write_bytes(raw[:-1]+bytes([raw[-1]^1]))
+        with self.assertRaisesRegex(ValueError,'body checksum'):precompiled_tables_info(self.root)
+        model.write_bytes(raw+b'tail')
+        with self.assertRaisesRegex(ValueError,'layout'):precompiled_tables_info(self.root)
 
 if __name__=='__main__':
     unittest.main()

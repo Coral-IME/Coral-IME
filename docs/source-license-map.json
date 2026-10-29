@@ -3,6 +3,12 @@
   "project_license": "MPL-2.0",
   "license_documents": ["LICENSE", "LICENSING.md", "THIRD_PARTY_NOTICES.md"],
   "project_paths": [
+    "tools/data/compact_tables.py",
+    "tools/native/table_restore/CMakeLists.txt",
+    "tools/native/table_restore/main.cpp",
+    "tests/release/test_compact_tables.py",
+    "docs/compact_runtime_tables.md",
+    "tools/checks/speech_sample.py",
     "docs/tsf_edit_boundaries.md",
     "tests/tsf_state/tsf_edit_boundaries_test.cpp",
     "docs/input_configuration_snapshot.md",

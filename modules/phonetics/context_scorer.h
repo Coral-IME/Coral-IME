@@ -17,6 +17,7 @@
 #include "coral/language_model/character_model.h"
 #endif
 #include <cmath>
+#include <unordered_map>
 
 namespace coral::phonetics {
 class ContextScorer
@@ -42,6 +43,11 @@ public:
     }
     bool load_surface_model(const filesystem::path& model, const filesystem::path& lexicon,
         std::string& error);
+    // 读音是输入观测，不改变词面语言模型的一元、二元或回退概率。
+    double reading_log_prior(uint32_t phrase_id) const {
+        const auto found = reading_log_priors_.find(phrase_id);
+        return found == reading_log_priors_.end() ? 0.0 : found->second;
+    }
 #if CORAL_ENABLE_CHARACTER_MODEL
     void configure_character_model(const std::filesystem::path& default_path, bool enabled = true);
     const coral::language_model::CharacterModel* character_model() const {
@@ -61,6 +67,7 @@ public:
 private:
 	coral::storage::BigramMappedView gbin_view_;
     coral::language_model::SurfaceModel surface_model_;
+    std::unordered_map<uint32_t, double> reading_log_priors_;
 #if CORAL_ENABLE_CHARACTER_MODEL
     std::shared_ptr<const coral::language_model::CharacterModel> character_model_;
     double character_weight_ = 0;

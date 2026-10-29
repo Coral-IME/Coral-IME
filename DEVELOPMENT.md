@@ -54,7 +54,7 @@
 - 更新版本和元数据严格解析，核对包大小与 SHA-256，使用同一已校验句柄提交且不覆盖目标，安装前重验。读取失败不能冒充有效摘要，失败不发送成功事件。请求固定已展示的发布身份，校验通信关联与单调进度；只继承必要句柄，只停止拥有的进程任务，不扫描删除其他更新缓存。
 - 更新通信不用全局命名共享对象或 NULL DACL，核对真实父进程与会话。网络请求限定 HTTPS、接收大小、取消与超时；校验分块检查取消，提交后的取消不回滚。更新默认使用官网配置，关闭更新使用 `CORAL_ENABLE_UPDATES=OFF`。在线词库地址为空时不创建请求或操作词库目录。
 - 词库导入解析独立于 UI/PCH，对话框只消费导入结果。在线词库管理器先使本轮令牌失效，再取消并等待请求；网络回调和已排队任务均校验本轮令牌。
-- 云服务凭据仅在本机加密保存，不进入共享设置、日志或公开夹具。语音录音不落盘，识别结果输入前复核原窗口与焦点；当前产品的语音入口屏蔽。
+- 云服务凭据仅在本机加密保存，不进入共享设置、日志或公开夹具。语音录音不落盘，识别结果输入前复核原窗口与焦点；开发期开放按住快捷键入口，大窗和悬浮栏点击入口保持屏蔽；总开关可再次关闭语音功能。
 
 具体边界见 [宿主生命周期](docs/session_host_lifecycle.md)、[TSF 桥接](docs/text_service_session_bridge.md)、[宿主启动](docs/host_bootstrap.md)、[服务启动](docs/service_launch.md)、[本地诊断](docs/local_diagnostics.md)、[更新包接受](docs/update_package_acceptance.md)、[更新通信](docs/update_private_channel.md)、[文本导入](docs/lexicon_text_import.md)、[在线词库](docs/online_lexicon_catalog.md)、[翻译](docs/translation_framework.md)及 [Windows 语音](docs/speech_windows.md)。
 

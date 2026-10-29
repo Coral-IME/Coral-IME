@@ -118,7 +118,7 @@ bool test_toolbar_handoff()
     g_toolbar_preferences->setConfig("speechEnabled", "true");
     refresh_toolbar(second, 30, 2000, 2000, false, 1430);
     RECT after{}; GetWindowRect(g_toolbarWindow, &after);
-    if (coral::speech::win32::kSpeechFeatureEnabled) {
+    if (coral::speech::win32::kSpeechFeatureEnabled && coral::speech::win32::kSpeechToolbarEnabled) {
         passed = passed && after.right-after.left > before.right-before.left &&
             HitToolbarButton(g_toolbarWindow, microphone_point) == 5;
         if (!passed) std::fprintf(stderr,"speech geometry: before=%ld after=%ld count=%d hit=%d\n",before.right-before.left,after.right-after.left,toolbar_button_count(),HitToolbarButton(g_toolbarWindow,microphone_point));
@@ -381,6 +381,9 @@ bool TestNativeMenuCancellation()
 
 int main(int argc, char** argv)
 {
+    // 独立演练真实工具栏，不依赖持久位置测试的注册表写权限。
+    if (argc == 2 && std::strcmp(argv[1], "--toolbar-handoff") == 0)
+        return test_toolbar_handoff() ? 0 : 1;
 	if (argc == 3 && std::strcmp(argv[1], "--read-toolbar-position") == 0)
 	{
 		POINT position{};

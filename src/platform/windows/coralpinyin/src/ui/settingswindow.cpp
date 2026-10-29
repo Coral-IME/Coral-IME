@@ -145,7 +145,7 @@ namespace
 		ID_S_UMODE = 0x1500, ID_S_VMODE, ID_S_UHELP, ID_S_VHELP,
         ID_S_TRANSLATION, ID_S_KEYID, ID_S_SECRET, ID_S_SAVEKEY, ID_S_TARGET, ID_S_TRANSLATION_HELP, ID_S_PREDICTION, ID_S_SHORTCUT, ID_S_CANDIDATES,
 		// 关于页
-        ID_V_ENABLED = 0x1800, ID_V_KEYID, ID_V_SECRET, ID_V_SAVEKEY, ID_V_SHORTCUT, ID_V_MIC, ID_V_PUSHTOTALK,
+        ID_V_ENABLED = 0x1800, ID_V_KEYID, ID_V_SECRET, ID_V_SAVEKEY, ID_V_SHORTCUT, ID_V_MIC,
 		ID_AB_CHECKUPDATE = 0x1700, ID_AB_EULA, ID_AB_PRIVACY, ID_AB_AUTOCHECK,
 	};
 
@@ -3066,7 +3066,7 @@ void SettingsWindow::createSpeechPage()
     PageBuilder b(s_pages[index], g_layouts[index], bounds.right);
     b.header(NAV_TITLES[index], PAGE_DESCRIPTIONS[index]);
     b.section(L"语音输入");
-    b.row(L"启用语音输入", L"开启并配置凭据后，可从快捷键或悬浮栏开始录音");
+    b.row(L"启用语音输入", L"按住快捷键录音，松开后整段识别；音频通过 HTTPS 发送至腾讯云");
     b.toggle(ID_V_ENABLED);
     b.row(L"SecretId（AccessKey）", L"腾讯云语音识别凭据，仅在本机加密保存", true);
     b.password(ID_V_KEYID, 430);
@@ -3075,16 +3075,13 @@ void SettingsWindow::createSpeechPage()
     b.password(ID_V_SECRET, 330);
     SendDlgItemMessageW(s_pages[index], ID_V_SECRET, EM_SETLIMITTEXT, 512, 0);
     b.button(ID_V_SAVEKEY, L"保存凭据");
-    b.section(L"按下发言");
-    b.row(L"按住 Ctrl + Win 发言", L"按下开始收集音频，松开结束并复用已有识别流程；开启后原快捷键暂停");
-    b.toggle(ID_V_PUSHTOTALK);
     b.section(L"唤起方式");
-    b.row(L"语音输入快捷键", L"未开启“按下发言”时，松开快捷键打开小窗并开始录音", true);
+    b.row(L"语音输入快捷键", L"按下开始，松开结束；文字自动输入，无输入光标时复制并提示", true);
     HWND shortcut = b.combo(ID_V_SHORTCUT, 240, {});
     for (const auto& option : coral::speech::kSpeechShortcuts)
         SendMessageW(shortcut, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(option.label));
     b.section(L"麦克风");
-    b.row(L"检测麦克风", L"检测默认输入设备并显示音量，检测录音不会上传", true);
+    b.row(L"检测麦克风", L"用底部小话筒检测 5 秒，检测录音不会上传", true);
     b.button(ID_V_MIC, L"检测麦克风");
     b.finish();
 }
@@ -3619,9 +3616,6 @@ void SettingsWindow::loadSpeechPage()
     for (std::size_t i = 0; i < coral::speech::kSpeechShortcuts.size(); ++i)
         if (shortcut == coral::speech::kSpeechShortcuts[i].value)
             SendMessageW(GetDlgItem(page, ID_V_SHORTCUT), CB_SETCURSEL, i, 0);
-    const bool push_to_talk = sConfig->get_speech_push_to_talk();
-    SendMessageW(GetDlgItem(page, ID_V_PUSHTOTALK), BM_SETCHECK, push_to_talk ? BST_CHECKED : BST_UNCHECKED, 0);
-    EnableWindow(GetDlgItem(page, ID_V_SHORTCUT), !push_to_talk);
     for (const auto id : {ID_V_KEYID, ID_V_SECRET, ID_V_SAVEKEY}) EnableWindow(GetDlgItem(page, id), enabled);
 }
 
@@ -3669,12 +3663,6 @@ void SettingsWindow::onCommand(WPARAM wParam, LPARAM lParam)
         for (const auto control : {ID_V_KEYID, ID_V_SECRET, ID_V_SAVEKEY})
             EnableWindow(GetDlgItem(s_pages[(int)SettingsEnum::SettingType::speech], control), checked);
         break;
-    case ID_V_PUSHTOTALK: {
-        sConfig->set_speech_push_to_talk(checked);
-        HWND page = s_pages[(int)SettingsEnum::SettingType::speech];
-        EnableWindow(GetDlgItem(page, ID_V_SHORTCUT), !checked);
-        break;
-    }
     case ID_V_SAVEKEY: {
         wchar_t key[513]{}, secret[513]{};
         HWND page = s_pages[(int)SettingsEnum::SettingType::speech];

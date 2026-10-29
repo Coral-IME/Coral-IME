@@ -180,12 +180,12 @@ void check_scale(HWND window, UINT dpi, const std::filesystem::path& output)
     SettingsWindow::scrollPage(2, 0);
     SettingsWindow::switchPage((int)SettingsEnum::SettingType::speech);
     HWND speech = SettingsWindow::s_pages[(int)SettingsEnum::SettingType::speech];
-    require(GetDlgItem(speech, ID_V_ENABLED) && GetDlgItem(speech, ID_V_MIC) && GetDlgItem(speech, ID_V_PUSHTOTALK),
+    require(GetDlgItem(speech, ID_V_ENABLED) && GetDlgItem(speech, ID_V_MIC),
         "Speech page missing");
     require(SendMessageW(GetDlgItem(speech, ID_V_ENABLED), BM_GETCHECK, 0, 0) == BST_UNCHECKED &&
         !IsWindowEnabled(GetDlgItem(speech, ID_V_SECRET)), "Speech must default off");
-    require(SendMessageW(GetDlgItem(speech, ID_V_PUSHTOTALK), BM_GETCHECK, 0, 0) == BST_UNCHECKED &&
-        IsWindowEnabled(GetDlgItem(speech, ID_V_SHORTCUT)), "Push-to-talk must default off");
+    require(!GetDlgItem(speech, 0x1806) && IsWindowEnabled(GetDlgItem(speech, ID_V_SHORTCUT)),
+        "Obsolete recording mode must not be exposed");
     require(SendMessageW(GetDlgItem(speech, ID_V_SHORTCUT), CB_GETCURSEL, 0, 0) == 0, "Wrong default speech shortcut");
     save_page(window, output / ("speech-" + std::to_string(dpi) + ".png"));
     SettingsWindow::switchPage((int)SettingsEnum::SettingType::about);
@@ -360,12 +360,12 @@ void check_speech_settings(HWND window, const std::filesystem::path& output)
     SharedMemoryConfig reader; require(reader.initialize(), "Cannot read speech preferences");
     require(reader.getConfig("speechEnabled") == "true" && reader.getConfig("speechKeyConfigured") == "true" &&
         reader.getConfig("speechCredentials").empty(), "Speech secrets leaked into shared settings");
-    click(ID_V_PUSHTOTALK, true);
-    require(reader.getConfig("speechPushToTalk") == "true" && sConfig->get_speech_push_to_talk() &&
-        !IsWindowEnabled(GetDlgItem(page, ID_V_SHORTCUT)), "Push-to-talk did not persist or suspend the shortcut");
-    click(ID_V_PUSHTOTALK, false);
-    require(reader.getConfig("speechPushToTalk") == "false" && !sConfig->get_speech_push_to_talk() &&
-        IsWindowEnabled(GetDlgItem(page, ID_V_SHORTCUT)), "Push-to-talk did not restore the shortcut");
+    require(IsWindowEnabled(GetDlgItem(page, ID_V_SHORTCUT)), "Hold shortcut must remain configurable");
+    sConfig->set_speech_push_to_talk(true);
+    require(sConfig->get_speech_shortcut() == "ctrl_win", "Legacy hold shortcut was not preserved");
+    sConfig->set_speech_shortcut("ctrl_alt_space");
+    require(!sConfig->get_speech_push_to_talk() && sConfig->get_speech_shortcut() == "ctrl_alt_space",
+        "Selecting a shortcut did not migrate the legacy mode");
     const auto scratch = std::filesystem::absolute(output / ("shortcut-" + std::to_string(GetCurrentProcessId())));
     std::ifstream input(scratch / "settings.ini");
     const std::string ini((std::istreambuf_iterator<char>(input)), {});
@@ -388,7 +388,7 @@ void check_speech_settings(HWND window, const std::filesystem::path& output)
         require(sConfig->get_speech_shortcut() == coral::speech::kSpeechShortcuts[i].value, "Speech shortcut persistence");
     }
     SettingsWindow::loadSpeechPage();
-    require(SendMessageW(GetDlgItem(page, ID_V_SHORTCUT), CB_GETCURSEL, 0, 0) == 3, "Speech shortcut readback");
+    require(SendMessageW(GetDlgItem(page, ID_V_SHORTCUT), CB_GETCURSEL, 0, 0) == static_cast<LRESULT>(coral::speech::kSpeechShortcuts.size() - 1), "Speech shortcut readback");
     save_page(window, output / "speech-enabled-144.png");
     SetDlgItemTextW(page, ID_V_SECRET, L""); click(ID_V_SAVEKEY);
     require(sConfig->get_speech_credentials() == credentials && sConfig->get_speech_credential_revision() == revision,

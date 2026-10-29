@@ -5,12 +5,92 @@
 #include "pch.h"
 #include "phonetic_types.h"
 #include "context_scorer.h"
+#include "lexicon_table.h"
+#include <algorithm>
 #include <cstdlib>
+#include <fstream>
+#include <vector>
 
 namespace
 {
 	// languagemodel.coral 静态图文件名，写入当前工作目录（compile_resource_files 已切换到输出目录）
 	constexpr const char* kGBinFileName = "languagemodel.coral";
+
+    bool build_reading_priors(const std::filesystem::path& path,
+        std::unordered_map<uint32_t, double>& priors, std::string& error) {
+        std::ifstream input(path, std::ios::binary | std::ios::ate);
+        if (!input) { error = "Cannot open pronunciation lexicon"; return false; }
+        const auto size = input.tellg();
+        input.seekg(0);
+        char magic[8]{};
+        input.read(magic, sizeof(magic));
+        // 非主词典摘要绑定文件没有读音信息，沿用原来的纯词面模型加载行为。
+        if (!input || std::memcmp(magic, kPrimaryBinMagic, sizeof(magic)) != 0) return true;
+        if (size < std::streamoff(sizeof(coral::storage::LexiconFileHeader)) ||
+            uint64_t(size) > 1024ull * 1024 * 1024) {
+            error = "Invalid pronunciation lexicon size"; return false;
+        }
+        std::vector<char> bytes(static_cast<size_t>(size));
+        input.seekg(0); input.read(bytes.data(), bytes.size());
+        coral::phonetics::LexiconTable table;
+        if (!input || !table.bind_data(bytes.data(), bytes.size())) {
+            error = "Invalid pronunciation lexicon"; return false;
+        }
+        struct Reading {
+            std::string_view word, pinyin;
+            uint32_t id;
+            double weight;
+        };
+        std::vector<Reading> rows;
+        rows.reserve(table.entry_count());
+        for (uint32_t i = 0; i < table.entry_count(); ++i) {
+            const auto& entry = table.entries()[i];
+            const auto word = table.entry_word(entry), pinyin = table.entry_pinyin(entry);
+            if (pinyin.empty() || std::all_of(word.begin(), word.end(),
+                [](unsigned char c) { return c < 128; })) continue;
+            if (!std::isfinite(entry.weight)) { error = "Invalid pronunciation weight"; return false; }
+            rows.push_back({word, pinyin, entry.phrase_id, entry.weight});
+        }
+        std::sort(rows.begin(), rows.end(), [](const Reading& a, const Reading& b) {
+            if (a.word != b.word) return a.word < b.word;
+            if (a.pinyin != b.pinyin) return a.pinyin < b.pinyin;
+            return a.id < b.id;
+        });
+        struct ReadingRange { size_t begin, end; double weight; };
+        std::vector<ReadingRange> readings;
+        for (size_t begin = 0; begin < rows.size();) {
+            size_t end = begin + 1;
+            while (end < rows.size() && rows[end].word == rows[begin].word) ++end;
+            readings.clear();
+            for (size_t start = begin; start < end;) {
+                size_t stop = start + 1;
+                double weight = rows[start].weight;
+                while (stop < end && rows[stop].pinyin == rows[start].pinyin) {
+                    weight = std::max(weight, rows[stop].weight); ++stop;
+                }
+                // 全拼、简拼和其他检索别名只算同一个读音，不能重复累加使用次数。
+                readings.push_back({start, stop, weight}); start = stop;
+            }
+            if (readings.size() > 1) {
+                double peak = readings.front().weight;
+                for (const auto& reading : readings) peak = std::max(peak, reading.weight);
+                double mass = 0;
+                for (const auto& reading : readings) mass += std::exp(reading.weight - peak);
+                const double total = peak + std::log(mass);
+                for (const auto& reading : readings) {
+                    const double prior = std::min(0.0, reading.weight - total);
+                    for (size_t i = reading.begin; i < reading.end; ++i) {
+                        const auto found = priors.emplace(rows[i].id, prior);
+                        if (!found.second && std::abs(found.first->second - prior) > 1e-10) {
+                            error = "Conflicting pronunciation identity"; return false;
+                        }
+                    }
+                }
+            }
+            begin = end;
+        }
+        return true;
+    }
 }
 
 coral::phonetics::ContextScorer::ContextScorer() = default;
@@ -49,7 +129,17 @@ void coral::phonetics::ContextScorer::configure_character_model(const std::files
 bool coral::phonetics::ContextScorer::load_surface_model(const filesystem::path& model,
     const filesystem::path& lexicon, std::string& error)
 {
-    return surface_model_.load_file(model, lexicon, error);
+    try {
+        coral::language_model::SurfaceModel candidate;
+        if (!candidate.load_file(model, lexicon, error)) return false;
+        std::unordered_map<uint32_t, double> priors;
+        if (!build_reading_priors(lexicon, priors, error)) return false;
+        surface_model_ = std::move(candidate);
+        reading_log_priors_ = std::move(priors);
+        return true;
+    } catch (const std::exception& failure) {
+        error = failure.what(); return false;
+    }
 }
 
 bool coral::phonetics::ContextScorer::load_g_bin_only(
@@ -90,6 +180,7 @@ bool coral::phonetics::ContextScorer::load_g_bin_only(
 
 	LOG_INFO("Langengine: bigram language model loaded from languagemodel.coral graph: " + gbinFile.path.string());
     surface_model_.reset();
+    reading_log_priors_.clear();
 	return true;
 }
 

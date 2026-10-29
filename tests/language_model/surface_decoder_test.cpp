@@ -88,6 +88,26 @@ double enumerate(const std::vector<Edge>& edges, int length, uint32_t condition,
 }
 
 int main(int argc, char** argv) {
+    if (argc == 5 && std::string(argv[4]) == "reading-priors") {
+        coral::phonetics::ContextScorer pronunciation_model;
+        std::string error;
+        if (!pronunciation_model.load_surface_model(argv[1], argv[2], error)) { std::cerr << error; return 30; }
+        // 手写的九比一读音分布，与输入法候选文字及主词典检索别名数量无关。
+        if (std::abs(pronunciation_model.reading_log_prior(12) - std::log(.9)) > 2e-6 ||
+            std::abs(pronunciation_model.reading_log_prior(13) - std::log(.1)) > 2e-6 ||
+            pronunciation_model.reading_log_prior(14) != 0) return 31;
+        const double common = decode({{0,1,12,-1.f},{1,2,14,-1.f}},2,kInvalidPhraseId,1.f,pronunciation_model);
+        const double rare = decode({{0,1,13,-1.f},{1,2,14,-1.f}},2,kInvalidPhraseId,1.f,pronunciation_model);
+        if (std::abs(common + std::log(.7 * .9 * .2)) > 2e-5 ||
+            std::abs(rare + std::log(.2 * .1 * .1)) > 2e-5) return 32;
+        // 失败重载保留已有模型及读音先验，不能出现新旧资源混用。
+        if (pronunciation_model.load_surface_model(argv[3], argv[2], error) ||
+            std::abs(pronunciation_model.reading_log_prior(13) - std::log(.1)) > 2e-6) return 33;
+        std::string first;
+        decode({{0,1,12,-.01f},{0,1,13,-.02f}},1,kInvalidPhraseId,1.f,pronunciation_model,&first);
+        if (first != "在") return 34;
+        std::cout << "reading priors passed\n"; return 0;
+    }
     if (argc != 3 && argc != 4) return 2;
     coral::phonetics::ContextScorer model;
     std::string error;

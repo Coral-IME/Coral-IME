@@ -741,10 +741,15 @@ bool SettingsConfig::getIsBraceFlipPageOpen() const
 bool SettingsConfig::get_speech_enabled() const { return getValue<bool>("speechEnabled"); }
 void SettingsConfig::set_speech_enabled(bool enabled) { setValue<bool>("speechEnabled", enabled); }
 std::string SettingsConfig::get_speech_shortcut() const {
+    // 兼容旧版 Ctrl+Win 按下发言配置；所有快捷键现在都采用按住录音。
+    if (getValue<bool>("speechPushToTalk")) return "ctrl_win";
     return coral::speech::speech_shortcut(getValue<std::string>("speechShortcut")).value;
 }
 void SettingsConfig::set_speech_shortcut(const std::string& value) {
-    if (value == coral::speech::speech_shortcut(value).value) setValue<std::string>("speechShortcut", value);
+    if (value == coral::speech::speech_shortcut(value).value) {
+        setValue<bool>("speechPushToTalk", false);
+        setValue<std::string>("speechShortcut", value);
+    }
 }
 bool SettingsConfig::get_speech_push_to_talk() const { return getValue<bool>("speechPushToTalk"); }
 void SettingsConfig::set_speech_push_to_talk(bool enabled) { setValue<bool>("speechPushToTalk", enabled); }

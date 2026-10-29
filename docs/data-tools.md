@@ -1,6 +1,6 @@
 # 数据、检查和打包入口
 
-2026-10-19 新增独立表面词 LM 实验格式 `CSLM0001`，见 [模型接口](surface_language_model.md)。下述既有 CSV/压缩包构建流程继续生成旧 `KNAGBIN1`，不承载新概率语义。新模型目前单独编码、原生读回并绑定实际主词典，尚未接入正式安装包生成与端侧重建；不要将它写入旧二元 CSV 后调用旧流水线。
+2026-10-19 新增独立表面词 LM 实验格式 `CSLM0001`，见 [模型接口](surface_language_model.md)。下述既有 CSV/压缩包构建流程继续生成旧 `KNAGBIN1`，不承载新概率语义。新模型单独编码、原生读回并绑定实际主词典，可通过预编译资源对的[紧凑编码及安装端还原](compact_runtime_tables.md)打包；不要将它写入旧二元 CSV 后调用旧流水线。
 
 正式入口统一位于 `tools/data/`、`tools/checks/`、`tools/release/` 和 `packaging/windows/`。旧 `src/script/` 入口只转发到新位置，参数改为下列显式路径，不再支持 `BUILD_DIR` 或旧目录层级推断。
 

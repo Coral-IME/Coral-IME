@@ -504,6 +504,7 @@ void refresh_toolbar(const coral::composition::ToolbarRenderSnapshot& toolbar,
     const UINT dpi = WindowDpi(g_toolbarWindow);
     if (g_toolbar_preferences)
         g_speech_toolbar_enabled = coral::speech::win32::kSpeechFeatureEnabled &&
+            coral::speech::win32::kSpeechToolbarEnabled &&
             g_toolbar_preferences->getConfig("speechEnabled") == "true";
     if (g_toolbarHover >= toolbar_button_count()) g_toolbarHover = -1;
     const int width = Scale(kToolbarPaddingX * 2 + kToolbarButtonSize * toolbar_button_count() +
