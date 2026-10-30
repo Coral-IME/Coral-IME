@@ -40,6 +40,7 @@ public:
     virtual bool apply_candidate_rule(composition::SessionToken session_id, const std::string& pinyin,
         const std::string& word, CandidateAction action, LanguageVariant variant) = 0;
     virtual HRESULT clear_cache(composition::SessionToken session_id) = 0;
+    virtual HRESULT reset(composition::SessionToken session_id) { return clear_cache(session_id); }
 };
 
 // 工厂执行平台启动/连接工作。它不得回调
@@ -54,7 +55,7 @@ public:
     HRESULT query(const CandidateLookup& lookup, CandidateSnapshot& snapshot) override;
     HRESULT refine(const CandidateLookup& lookup, CandidateSnapshot& snapshot) override;
     void cancel_refinement(const CandidateLookup& lookup) override;
-    HRESULT reset(composition::SessionToken session_id);
+    HRESULT reset(composition::SessionToken session_id) override;
     HRESULT remember_candidate(composition::SessionToken session_id, const std::string& pinyin,
         const std::string& word, std::uint32_t& condition_id) override;
     bool revert_last_action(composition::SessionToken session_id, const std::string& word);

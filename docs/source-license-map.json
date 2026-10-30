@@ -3,6 +3,8 @@
   "project_license": "MPL-2.0",
   "license_documents": ["LICENSE", "LICENSING.md", "THIRD_PARTY_NOTICES.md"],
   "project_paths": [
+    "modules/phonetics/prefix_stability.h",
+    "docs/prefix_stability.md",
     "tools/data/compact_tables.py",
     "tools/native/table_restore/CMakeLists.txt",
     "tools/native/table_restore/main.cpp",

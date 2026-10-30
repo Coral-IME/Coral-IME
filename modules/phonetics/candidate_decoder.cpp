@@ -4,6 +4,7 @@
 #include "candidate_decoder.h"
 #include "support/indexed_string_set.hpp"
 #include "support/parse_metrics.hpp"
+#include "syllable_helpers.h"
 #include "coral/language_model/character_rerank.h"
 
 #include <algorithm>
@@ -20,6 +21,54 @@ namespace
 {
 	constexpr int kPathCandidateLimit = 32;
 	constexpr int kStateBestCap = 8;
+    constexpr double kPrefixPenaltyCap = 3.0;
+    thread_local const std::vector<coral::phonetics::PrefixAnchor>* active_prefix = nullptr;
+
+    // 仅汉字参与稳定策略；英文、符号和无效 UTF-8 不建立锚点。
+    bool han_cells(std::string_view text, std::vector<std::string_view>& cells) {
+        cells.clear();
+        for (size_t at = 0; at < text.size();) {
+            const auto lead = static_cast<unsigned char>(text[at]);
+            const size_t size = lead >= 0xf0 && lead <= 0xf4 ? 4 : lead >= 0xe0 && lead <= 0xef ? 3 : 0;
+            if (!size || at + size > text.size()) return false;
+            unsigned value = lead & (size == 4 ? 7 : 15);
+            for (size_t i = 1; i < size; ++i) {
+                const auto next = static_cast<unsigned char>(text[at + i]);
+                if ((next & 0xc0) != 0x80) return false;
+                value = (value << 6) | (next & 63);
+            }
+            if (size == 4 && value < 0x10000) return false;
+            if (!((value >= 0x3400 && value <= 0x4dbf) || (value >= 0x4e00 && value <= 0x9fff) ||
+                (value >= 0xf900 && value <= 0xfaff) || (value >= 0x20000 && value <= 0x323af))) return false;
+            cells.push_back(text.substr(at, size)); at += size;
+        }
+        return !cells.empty();
+    }
+
+    template<class Readings>
+    bool align_cells(std::string_view word, const Readings& readings, std::string_view input,
+        int from, int to, std::vector<coral::phonetics::PrefixAnchor>& result, bool complete = true) {
+        result.clear();
+        std::vector<std::string_view> cells;
+        if (!han_cells(word, cells) || cells.size() != readings.size() || from < 0 ||
+            to < from || static_cast<size_t>(to) > input.size()) return false;
+        size_t at = static_cast<size_t>(from);
+        for (size_t i = 0; i < cells.size(); ++i) {
+            while (at < static_cast<size_t>(to) && input[at] == '\'') ++at;
+            const std::string_view reading = readings[i];
+            const auto begin = at;
+            if (reading.empty()) return false;
+            // 部分展示串在音节内仍带分隔符，逐字核对原始覆盖范围。
+            for (char ch : reading) {
+                if (ch == '\'') continue;
+                if (at >= static_cast<size_t>(to) || input[at++] != ch) return false;
+            }
+            result.push_back({static_cast<int>(begin), static_cast<int>(at), std::string(cells[i]), 0,
+                !coral::phonetics::syntax::is_jian_pin(reading) && !coral::phonetics::syntax::is_sheng_mu(reading)});
+        }
+        while (at < static_cast<size_t>(to) && input[at] == '\'') ++at;
+        return !complete || at == static_cast<size_t>(to);
+    }
 
     double model_input_penalty(const coral::phonetics::CandidateEdgePayload& data,
         const coral::phonetics::ContextScorer& model) {
@@ -205,6 +254,56 @@ namespace
 	}
 }
 
+void coral::phonetics::PrefixStability::reset() {
+    condition_.clear(); input_.clear(); mode_ = -1; shown_.clear(); anchors_.clear(); advance_age_ = true;
+}
+
+const std::vector<coral::phonetics::PrefixAnchor>& coral::phonetics::PrefixStability::prepare(
+    std::string_view condition, std::string_view input, int mode) {
+    if (condition == condition_ && mode == mode_ && input == input_) return anchors_;
+    const bool append = condition == condition_ && mode == mode_ && !input_.empty() &&
+        input.size() > input_.size() && input.substr(0, input_.size()) == input_;
+    anchors_.clear();
+    if (append && shown_.size() > 2) {
+        anchors_.assign(shown_.begin(), shown_.end() - 2);
+        // 简拼和未完成音节的歧义很大，不能把尚在猜测的前部当作稳定证据。
+        anchors_.erase(std::remove_if(anchors_.begin(), anchors_.end(), [](const auto& cell) {
+            return !cell.complete;
+        }), anchors_.end());
+    } else shown_.clear();
+    condition_.assign(condition); input_.assign(input); mode_ = mode; advance_age_ = true;
+    return anchors_;
+}
+
+void coral::phonetics::PrefixStability::observe(std::string_view word, std::string_view pinyin) {
+    std::vector<std::string_view> readings;
+    for (size_t at = 0; at < pinyin.size();) {
+        const auto end = pinyin.find('\'', at);
+        const auto length = (end == std::string_view::npos ? pinyin.size() : end) - at;
+        if (length) readings.push_back(pinyin.substr(at, length));
+        at += length + 1;
+    }
+    std::vector<PrefixAnchor> next;
+    if (!align_cells(word, readings, input_, 0, static_cast<int>(input_.size()), next, false)) {
+        shown_.clear(); return;
+    }
+    for (auto& cell : next) {
+        const auto old = std::find_if(shown_.begin(), shown_.end(), [&](const auto& previous) {
+            return previous.begin == cell.begin && previous.end == cell.end && previous.text == cell.text;
+        });
+        cell.age = old == shown_.end() ? 1 : std::min(4u, old->age + (advance_age_ ? 1 : 0));
+    }
+    shown_ = std::move(next);
+    advance_age_ = false;
+}
+
+coral::phonetics::PrefixStabilityScope::PrefixStabilityScope(const std::vector<PrefixAnchor>& anchors)
+    : previous_(active_prefix) { active_prefix = &anchors; }
+coral::phonetics::PrefixStabilityScope::~PrefixStabilityScope() { active_prefix = previous_; }
+const std::vector<coral::phonetics::PrefixAnchor>* coral::phonetics::PrefixStabilityScope::current() {
+    return active_prefix;
+}
+
 bool coral::phonetics::CandidateDecoder::init(const coral::phonetics::CandidateLattice& wordLattice, const coral::phonetics::ContextScorer& languageModel)
 {
 	lattice_ = &wordLattice;
@@ -251,6 +350,46 @@ bool coral::phonetics::CandidateDecoder::init(const coral::phonetics::CandidateL
         mixed_heuristic_.clear();
         can_reach_english_.clear();
         return true;
+    }
+
+    prefix_anchors_ = PrefixStabilityScope::current();
+    prefix_arc_penalties_.assign(arcs.size(), 0);
+    arc_han_counts_.assign(arcs.size(), 0);
+    if (prefix_anchors_ && !prefix_anchors_->empty()) {
+        std::vector<PrefixAnchor> aligned;
+        std::vector<std::string_view> cells;
+        for (size_t i = 0; i < arcs.size(); ++i) {
+            const auto& arc = arcs[i];
+            if (!arc.data.is_usable() || arc.from < 0 || arc.to <= arc.from || arc.to >= vertexCount) continue;
+            // 混输不施加稳定惩罚；无法逐音节对齐的中文弧不能绕过已有锚点。
+            if (!han_cells(arc.data.phrase, cells)) continue;
+            arc_han_counts_[i] = static_cast<unsigned>(cells.size());
+            const int from = wordLattice.input_offset(arc.from), to = wordLattice.input_offset(arc.to);
+            if (from < 0 || to < from) continue;
+            const bool matched = align_cells(arc.data.phrase,
+                arc.data.pinyin_sequence().get_ui_show_pinyin_sequence(), wordLattice.input_pinyin(),
+                from, to, aligned);
+            for (const auto& anchor : *prefix_anchors_) {
+                if (anchor.end <= from || anchor.end > to) continue;
+                const bool same = matched && std::any_of(aligned.begin(), aligned.end(), [&](const auto& cell) {
+                    return cell.begin == anchor.begin && cell.end == anchor.end && cell.text == anchor.text;
+                });
+                if (!same) prefix_arc_penalties_[i] += .5 + .25 * std::min(4u, anchor.age);
+            }
+        }
+        // 存在短的完整中文解释时整轮暂缓，避免长备选的惩罚间接改变五字内的神经短名单。
+        std::vector<unsigned> minimum_han(vertexCount, (std::numeric_limits<unsigned>::max)());
+        minimum_han.back() = 0;
+        for (int from = vertexCount - 2; from >= 0; --from) {
+            for (int edge = csr_offset_[from]; edge < csr_offset_[from + 1]; ++edge) {
+                const auto index = edge_indices_[edge]; const auto& arc = arcs[index];
+                if (arc.to <= from || arc.to >= vertexCount || !arc_han_counts_[index] ||
+                    arc.data.english_context_only || arc.data.pinyin_sequence().is_match_english_vocab_ ||
+                    minimum_han[arc.to] == (std::numeric_limits<unsigned>::max)()) continue;
+                minimum_han[from] = std::min(minimum_han[from], arc_han_counts_[index] + minimum_han[arc.to]);
+            }
+        }
+        if (minimum_han[0] <= 5) prefix_anchors_ = nullptr;
     }
 
 	// A* 启发值来自与 FstDecoder::computeCsrHeuristic 相同的后向 DP：
@@ -459,18 +598,58 @@ bool coral::phonetics::CandidateDecoder::find_best_paths(
 		if (requireEnglish && !candidate.hasEnglish && !can_reach_english_[candidate.position]) return;
 		const uint64_t key = stateKey(candidate);
 		StateRow& row = states[key];
+        // 同一语言模型状态只保留每种输出前缀的最低代价；分词别名不占额外名额。
+        // 哈希只用于预筛，逐字节复核避免碰撞合并。不同模型状态仍分别搜索。
+        const auto same_text = [&](int existing) {
+            const auto& old = search_nodes_[existing];
+            if (old.text_hash != candidate.text_hash || old.text_size != candidate.text_size) return false;
+            // 未生效惩罚与封顶余量也影响后续成本，不能只凭文字合并这些状态。
+            if (old.prefix_debt != candidate.prefix_debt || old.han_count != candidate.han_count) return false;
+            int left = existing, right = candidate.parent;
+            std::string_view a, b = arcs[candidate.latticeArcIndex].data.phrase;
+            size_t ai = 0, bi = b.size();
+            while (true) {
+                while (!ai && left >= 0) {
+                    const auto& node = search_nodes_[left]; left = node.parent;
+                    if (node.latticeArcIndex >= 0) { a = arcs[node.latticeArcIndex].data.phrase; ai = a.size(); }
+                }
+                while (!bi && right >= 0) {
+                    const auto& node = search_nodes_[right]; right = node.parent;
+                    if (node.latticeArcIndex >= 0) { b = arcs[node.latticeArcIndex].data.phrase; bi = b.size(); }
+                }
+                if (!ai || !bi) return ai == bi;
+                const auto count = std::min(ai, bi);
+                if (a.substr(ai - count, count) != b.substr(bi - count, count)) return false;
+                ai -= count; bi -= count;
+            }
+        };
+        for (int i = 0; i < row.bestCount; ++i) {
+            if (!same_text(row.nodes[i])) continue;
+            if (candidate.cost >= row.best[i]) return;
+            search_nodes_[row.nodes[i]].superseded = true;
+            for (int j = i + 1; j < row.bestCount; ++j) {
+                row.best[j - 1] = row.best[j]; row.nodes[j - 1] = row.nodes[j];
+            }
+            --row.bestCount;
+            break;
+        }
 		if (row.bestCount >= bestLimit && candidate.cost >= row.best[row.bestCount - 1])
 			return;
 
+        if (row.bestCount == bestLimit) search_nodes_[row.nodes[row.bestCount - 1]].superseded = true;
 		int insertAt = row.bestCount;
 		while (insertAt > 0 && row.best[insertAt - 1] > candidate.cost)
 		{
-			if (insertAt < bestLimit)
+			if (insertAt < bestLimit) {
 				row.best[insertAt] = row.best[insertAt - 1];
+                row.nodes[insertAt] = row.nodes[insertAt - 1];
+            }
 			--insertAt;
 		}
-		if (insertAt < bestLimit)
+		if (insertAt < bestLimit) {
 			row.best[insertAt] = candidate.cost;
+            row.nodes[insertAt] = static_cast<int>(search_nodes_.size());
+        }
 		if (row.bestCount < bestLimit)
 			++row.bestCount;
 
@@ -489,6 +668,7 @@ bool coral::phonetics::CandidateDecoder::find_best_paths(
 		queue.pop();
 		PERF_INC(decoderPops);
 		const SearchNode current = search_nodes_[currentItem.nodeIndex];
+        if (current.superseded) continue;
 
 		if (current.wordCount != 0)
 		{
@@ -640,6 +820,17 @@ bool coral::phonetics::CandidateDecoder::find_best_paths(
 			next.gState = nextGState;
 			next.latticeArcIndex = arcIndex;
 			next.parent = currentItem.nodeIndex;
+            next.text_hash = current.text_hash;
+            for (unsigned char byte : data.phrase) { next.text_hash ^= byte; next.text_hash *= 1099511628211ULL; }
+            next.text_size = current.text_size + data.phrase.size();
+            // 先记本轮从零计算的惩罚，达到第六个汉字才计入搜索代价。
+            // 前五字始终保留原分数，启发值不含惩罚，仍是可采纳下界。
+            if (!requireEnglish && prefix_anchors_ && !prefix_anchors_->empty()) {
+                next.han_count = std::min(6u, current.han_count + arc_han_counts_[arcIndex]);
+                next.prefix_debt = std::min(kPrefixPenaltyCap, current.prefix_debt + prefix_arc_penalties_[arcIndex]);
+                next.cost += (next.han_count > 5 ? next.prefix_debt : 0) -
+                    (current.han_count > 5 ? current.prefix_debt : 0);
+            }
 			next.wordCount = static_cast<uint16_t>(std::min<int>(current.wordCount + 1,
 				(std::numeric_limits<uint16_t>::max)()));
 			next.allBigram = current.wordCount == 0 ? true : current.allBigram && bigramHit;

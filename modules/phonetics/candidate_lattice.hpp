@@ -55,6 +55,8 @@ public:
 	// 长尾候选照常完整召回。
 	// 新概率模型与词典权重不同序，上述同序论证不适用；当前仍保留上限，须结合评分校准另行验收。
 	void set_span_fetch_cap(const int cap) { span_fetch_cap_ = cap; }
+    void set_input_offset(int vertex, int offset) { input_offsets_[vertex] = offset; }
+    int input_offset(int vertex) const { return input_offsets_[vertex]; }
 
 	bool init_graph(
 		int vertexCount,
@@ -72,6 +74,9 @@ public:
 		// 避免用户的简拼体验被感染。    如：  森林 + l， 此时首位应该还是 了 ， 而不是 森林狼 的 狼
 		max_pinyin_ = pinyin;
 		vertex_count_ = vertexCount;
+        input_offsets_.assign(vertexCount, -1);
+        if (static_cast<size_t>(vertexCount) == pinyin.size() + 1)
+            for (int i = 0; i < vertexCount; ++i) input_offsets_[i] = i;
 		arcs_.clear();
 		// 弧数随输入长度快速增长，按顶点数给一个够用的下限，省掉前若干次扩容搬移
 		arcs_.reserve(std::max<size_t>(256, 64 * static_cast<size_t>(vertexCount)));
@@ -511,6 +516,7 @@ private:
 	std::unordered_set<size_t> dup_probe_;
 #endif
 	int vertex_count_ = 0;
+    std::vector<int> input_offsets_;
 	int span_fetch_cap_ = -1;
 	coral::phonetics::ParseTextViews default_phrases_;
 	string_view max_pinyin_;

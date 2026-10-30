@@ -18,6 +18,7 @@ public:
     virtual bool query_candidates(const std::string& condition, const std::string& pinyin,
         int offset, int page_size, int mode, CandidatePage& page) = 0;
     virtual void remember_selection(const Candidate& candidate) = 0;
+    virtual void reset_composition() {}
 };
 
 class CompositionSession
@@ -30,6 +31,7 @@ public:
     Output select_index(int index_in_page);
     Output page_candidates(int delta);
     Output reset();
+    void reset_candidate_history() { source_->reset_composition(); }
     Output query_page(const std::string& condition, const std::string& pinyin, int offset,
         int mode = kModeQuanpin);
     bool has_input() const { return !pinyin_.empty(); }

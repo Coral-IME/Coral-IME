@@ -13,6 +13,8 @@ public:
     bool query_error = false;
     int queries = 0;
     int remembered = 0;
+    int resets = 0;
+    void reset_composition() override { ++resets; }
     std::string previous_condition;
     bool query_candidates(const std::string& condition, const std::string& pinyin,
         int offset, int page_size, int, CandidatePage& page) override
@@ -54,11 +56,14 @@ int main()
     assert(query_failed && session.pinyin() == "ni'hao" && session.condition().empty());
     source->query_error = false;
     source->learning_error = true;
+    const int reset_before_failed_selection = source->resets;
     bool learning_failed = false;
     try { session.select_index(0); } catch (const std::runtime_error&) { learning_failed = true; }
     assert(learning_failed && session.pinyin() == "ni'hao" && source->remembered == 0);
+    assert(source->resets == reset_before_failed_selection);
     source->learning_error = false;
     output = session.select_index(0);
+    assert(source->resets == reset_before_failed_selection + 1);
     assert(output.commit_text == u8"你" && output.composition == "hao" && output.candidates_visible);
     assert(output.candidates.candidates[0].word == u8"好" && session.condition() == u8"你");
     assert(source->previous_condition == u8"你");
@@ -75,7 +80,9 @@ int main()
     assert(source->queries == before + 2);
     output = session.query_page("changed", "changed", std::numeric_limits<int>::max());
     assert(output.composition == "abc" && session.condition().empty());
+    const int reset_before_escape = source->resets;
     session.reset();
+    assert(source->resets == reset_before_escape + 1);
     assert(session.page_size() == 7 && !session.has_input());
     for (char letter : std::string("abc"))
     {

@@ -20,6 +20,7 @@ const char* word(uint32_t id) {
     case 16: return "在在";
     case 17: return "在在在在";
     case 18: return "再在在在";
+    case 19: return "在在在在在在";
     default: return "甲";
     }
 }
@@ -39,14 +40,15 @@ double step(uint32_t previous, const Edge& edge) {
 }
 double decode(const std::vector<Edge>& edges, int length, uint32_t condition,
     float influence, const coral::phonetics::ContextScorer& model, std::string* first = nullptr,
-    int penalty_mode = 0, bool smart_candidates = true) {
+    int penalty_mode = 0, bool smart_candidates = true, int input_scale = 1) {
     coral::phonetics::support::ParseArenaScope arena;
     coral::phonetics::LexiconCatalog lexicon;
     coral::phonetics::CandidateLattice lattice;
-    const std::string input(length, 'a');
+    const std::string input(length * input_scale, 'a');
     lattice.init_graph(length + 1, input, lexicon);
+    for (int i = 0; i <= length; ++i) lattice.set_input_offset(i, i * input_scale);
     for (const auto& edge : edges) {
-        const auto reading = std::string_view(input).substr(edge.from, edge.to - edge.from);
+        const auto reading = std::string_view(input).substr(edge.from * input_scale, (edge.to - edge.from) * input_scale);
         coral::phonetics::PhoneticSequence sequence({reading}, {}, edge.from, edge.to, 3, false, false);
         sequence.is_fuzzy_match_ = penalty_mode == 1 || penalty_mode == 2;
         if (penalty_mode == 2) sequence.sub_sequences_.push_back("a");
@@ -142,6 +144,57 @@ int main(int argc, char** argv) {
     if (first != "在") return 15;
     decode({{0,1,kInvalidPhraseId,-.001f}},1,12,1.f,empty_model,&first);
     if (first != "甲") { std::cerr << "User dictionary hit without primary ID was lost"; return 17; }
+    {
+        using namespace coral::phonetics;
+        PrefixStability history, independent;
+        history.prepare("", "aaaa", 0);
+        history.observe("再在在在", "a'a'a'a");
+        const auto& anchors = history.prepare("", "aaaaa", 0);
+        if (anchors.size() != 2 || !independent.prepare("", "aaaaaa", 0).empty()) return 40;
+        const auto weak_edges = [](int size, float gap) {
+            std::vector<Edge> result{{0,1,12,-1.f},{0,1,13,-1.f-gap}};
+            for (int at = 1; at < size; ++at) result.push_back({at,at+1,12,-1.f});
+            return result;
+        };
+        {
+            PrefixStabilityScope scope(anchors);
+            // 字数门槛按输出汉字计数，恰好五字不加罚，第六字才保护先前首选。
+            decode(weak_edges(5,.2f),5,kInvalidPhraseId,1.f,empty_model,&first);
+            if (first != "在在在在在") return 41;
+            decode(weak_edges(6,.2f),6,kInvalidPhraseId,1.f,empty_model,&first);
+            if (first != "再在在在在在") return 42;
+            // 新证据足够强时可以纠正；每轮重新计罚，不累积上轮奖励。
+            decode(weak_edges(6,4.f),6,kInvalidPhraseId,1.f,empty_model,&first);
+            if (first != "在在在在在在") return 43;
+            auto short_interpretation = weak_edges(6,.2f);
+            short_interpretation.push_back({0,2,99,-100.f});
+            decode(short_interpretation,6,kInvalidPhraseId,1.f,empty_model,&first);
+            if (first != "在在在在在在") return 53;
+            decode({{0,6,19,-1.f}},6,kInvalidPhraseId,1.f,empty_model,&first);
+            if (first != "在在在在在在") return 44;
+        }
+        history.observe("再在在在在", "a'a'a'a'a");
+        if (history.prepare("", "aaaaa", 0).size() != 2) return 45;
+        // 后两个字不受保护；退格、改写、条件和模式变化都重建历史。
+        if (!history.prepare("", "aaaa", 0).empty()) return 46;
+        history.observe("再在在在", "a'a'a'a");
+        if (!history.prepare("changed", "aaaaa", 0).empty()) return 47;
+        history.observe("再在在在在", "a'a'a'a'a");
+        if (!history.prepare("changed", "aaaaaa", 1).empty()) return 48;
+        history.reset();
+        if (!history.prepare("", "aaaaaa", 0).empty() || PrefixStabilityScope::current()) return 49;
+        history.prepare("", "bcdm", 0);
+        history.observe("再在在在", "b'c'd'm");
+        if (!history.prepare("", "bcdmn", 0).empty()) return 52;
+        history.reset();
+        history.prepare("", "aaaaaaaa", 0);
+        history.observe("再在在在", "aa'aa'aa'aa");
+        {
+            PrefixStabilityScope scope(history.prepare("", "aaaaaaaaaaaa", 0));
+            decode(weak_edges(6,.2f),6,kInvalidPhraseId,1.f,empty_model,&first,0,true,2);
+            if (first != "再在在在在在") return 51;
+        }
+    }
     const double unknown = decode({{0,1,99,-.15f},{1,2,13,-12.f}}, 2, 12, .7f, model);
     if (std::abs(unknown - (.15 - std::log(.2))) > 1e-5) return 6;
     for (int mode : {1,2,3}) {
@@ -156,6 +209,15 @@ int main(int argc, char** argv) {
         decode(alternatives,2,kInvalidPhraseId,1.f,model,&first);
         if (first != "在在") return 9;
         if (!model.load_character_model(argv[3],1,error)) return 10;
+        {
+            // 人工构造重复分词别名，证明它们不能挤掉另一种中文前缀。
+            std::vector<Edge> crowded;
+            for (int i = 0; i < 40; ++i) crowded.push_back({0,1,12,-1.f});
+            crowded.push_back({0,1,13,-1.f});
+            for (int at = 1; at < 4; ++at) crowded.push_back({at,at+1,12,-1.f});
+            decode(crowded,4,kInvalidPhraseId,1.f,model,&first);
+            if (CORAL_CHARACTER_RERANK_THRESHOLD < 4 && first != "再在在在") return 50;
+        }
         // 四字词库直出必须压过模型更偏好的同音词及可用的多弧组合路径。
         decode({{0,4,17,-2.f},{0,4,18,-2.1f},{0,1,13,-.01f},
                 {1,2,12,-.01f},{2,3,12,-.01f},{3,4,12,-.01f}},

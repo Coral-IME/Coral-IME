@@ -1053,6 +1053,20 @@ bool coral::phonetics::SyllableParser::parse_input(
         clear_pinyin_model_cache();
         cached_condition_ = active_condition;
     }
+    {
+        const auto* anchors = PrefixStabilityScope::current();
+        const size_t count = anchors ? anchors->size() : 0;
+        const bool same = cached_prefix_anchors_.size() == count && (!count ||
+            std::equal(anchors->begin(), anchors->end(), cached_prefix_anchors_.begin(), [](const auto& a, const auto& b) {
+                return a.begin == b.begin && a.end == b.end && a.text == b.text && a.age == b.age && a.complete == b.complete;
+            }));
+        // 同一拼音、条件和页码仍可能属于不同会话，翻页缓存也必须匹配稳定锚点。
+        if (!same) {
+            clear_pinyin_model_cache();
+            if (anchors) cached_prefix_anchors_ = *anchors;
+            else cached_prefix_anchors_.clear();
+        }
+    }
     build_fuzzy_map();
     parseMode = get_parse_mode(pystring, offset + solutionSize);
 	if (parseMode != ParseMode::CacheOnly)

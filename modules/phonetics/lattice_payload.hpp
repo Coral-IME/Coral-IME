@@ -89,6 +89,7 @@ struct SyllableVertexPayload
 	SyllableVertexPayload() = default;
 	~SyllableVertexPayload() = default;
 	int compact_id = -1;
+    int input_offset = -1;
 #ifdef _DEBUG
 	string word;
 #endif

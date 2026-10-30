@@ -9,6 +9,7 @@
 #include "candidate_lattice.hpp"
 #include "context_scorer.h"
 #include "candidate_result.h"
+#include "prefix_stability.h"
 
 #include <vector>
 
@@ -56,6 +57,11 @@ private:
 		bool allBigram = true;
 		bool hasEnglish = false;
         bool condition_pending = false;
+        uint64_t text_hash = 14695981039346656037ULL;
+        size_t text_size = 0;
+        unsigned han_count = 0;
+        double prefix_debt = 0;
+        bool superseded = false;
 	};
 
 	struct QueueItem
@@ -80,6 +86,7 @@ private:
 		uint16_t pops = 0;
 		uint8_t bestCount = 0;
 		double best[8]{};
+        int nodes[8]{};
 	};
 
     double condition_weight(double ordinary, double conditional) const {
@@ -116,6 +123,9 @@ private:
 	std::vector<SearchNode, coral::phonetics::support::PoolAllocator<SearchNode>> search_nodes_;
 	// 终态去重用的句子缓冲，复用容量以免每次弹出都重新分配
 	std::string sentence_buffer_;
+    const std::vector<PrefixAnchor>* prefix_anchors_ = nullptr;
+    std::vector<double> prefix_arc_penalties_;
+    std::vector<unsigned> arc_han_counts_;
 	vector<coral::phonetics::CandidateResult>* solution_pool_ = nullptr;
 	std::string extended_match_;
 	int direct_candidate_budget_{ kUnlimitedDirectCandidates };

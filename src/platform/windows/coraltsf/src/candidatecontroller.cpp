@@ -568,6 +568,7 @@ bool CandidateController::removeNextLetter()
 void CandidateController::moveCursorHome()
 {
     cancel_refinement();
+    if (m_source && m_sessionId) m_source->reset(m_sessionId);
 	m_compositionEditing = true;
 	m_cursor = 0;
 	if (m_sink)
@@ -577,6 +578,7 @@ void CandidateController::moveCursorHome()
 void CandidateController::moveCursorEnd()
 {
     cancel_refinement();
+    if (m_source && m_sessionId) m_source->reset(m_sessionId);
 	m_compositionEditing = true;
 	m_cursor = m_unfinished.GetLength();
 	if (m_sink)
@@ -629,6 +631,7 @@ void CandidateController::moveNextCol()
 	{
 		if (m_cursor < m_unfinished.GetLength())
 		{
+			if (m_source && m_sessionId) m_source->reset(m_sessionId);
 			++m_cursor;
 			if (m_sink) m_sink->setCursorPos(compositionCursor());
 			return;
@@ -672,6 +675,7 @@ void CandidateController::movePrevCol()
 	}
 	if (m_compositionEditing)
 	{
+		if (m_source && m_sessionId) m_source->reset(m_sessionId);
 		if (m_cursor > 0) --m_cursor;
 		if (m_sink) m_sink->setCursorPos(compositionCursor());
 		return;
@@ -684,6 +688,7 @@ void CandidateController::movePrevCol()
 	}
 	m_compositionEditing = true;
 	m_cursor = std::max(0, m_unfinished.GetLength() - 1);
+    if (m_source && m_sessionId) m_source->reset(m_sessionId);
 	if (m_sink) m_sink->setCursorPos(compositionCursor());
 }
 
@@ -1101,6 +1106,7 @@ void CandidateController::Reset()
 {
     ++commit_generation_;
     cancel_refinement();
+    if (m_source && m_sessionId) m_source->reset(m_sessionId);
     cancel_translation_request();
     translation_.reset();
     original_candidates_.reset();

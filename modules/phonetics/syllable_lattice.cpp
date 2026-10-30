@@ -32,6 +32,11 @@ bool coral::phonetics::SyllableLattice::make_graph(const string_view pinyinStrin
 	vertices_.resize(vertexCount);
 	for(size_t i = 0; i < vertexCount; ++i)
 		vertices_[i].id = (int)i;
+    // 原始字节位置在缩图后仍用于连续输入锚点，不能用 compact_id 代替。
+    size_t input_vertex = 0;
+    for (size_t i = 0; i < pinyinString.size(); ++i)
+        if (pinyinString[i] != '\'') vertices_[input_vertex++].data.input_offset = static_cast<int>(i);
+    vertices_.back().data.input_offset = static_cast<int>(pinyinString.size());
 	
 	unordered_set<int> semicolonPositions;
 	vector<int> positionSemicolonNum(pinyin_length + 1);
@@ -436,6 +441,7 @@ bool coral::phonetics::SyllableLattice::make_doublepinyin_graph(const string_vie
 	for (size_t i = 0; i < syllableList.size(); ++i)
 	{
 		const string_view syllable = syllableList[i];
+        vertices_[i].data.input_offset = static_cast<int>(syllable.data() - pinyinString.data());
 		auto iter = syllables.find(syllable);
 		if (iter != syllables.end())
 		{
@@ -453,6 +459,7 @@ bool coral::phonetics::SyllableLattice::make_doublepinyin_graph(const string_vie
 	}
 	coral::phonetics::SyllablePathSearch yenKSP;
 	yenKSP.calculate_yen_ksp(*this, kMaxTopk, kMaxPathDist, shortestPaths);
+    vertices_.back().data.input_offset = static_cast<int>(pinyinString.size());
 	return true;
 }
 
@@ -566,6 +573,8 @@ bool coral::phonetics::SyllableLattice::get_pinyin_sequences(
 		isFullPinyinMatch = shortestPaths.begin()->is_full_path_;
 	const int vertexCount = get_vertex_count();
 	wordLattice.init_graph(vertexCount, pinyinString, lexicon);
+    for (int i = 0; i < vertexCount; ++i)
+        wordLattice.set_input_offset(i, vertices_[i].data.input_offset);
 
 	pySeqSearchSet pySeqSearchMap;
 	pySeqSearchMap.reserve(vertices_.size() * vertices_.size());	// pinyinSeq的数量和顶点数的平方基本成正比
@@ -1093,6 +1102,7 @@ bool coral::phonetics::SyllableLattice::shrink_graph_by_yen_ksp(
 		{
 			shrinked[i].id = static_cast<int>(i);
 			shrinked[i].data.compact_id = static_cast<int>(i);
+            shrinked[i].data.input_offset = vertices_[(*std::next(vertices.cbegin(), i))].data.input_offset;
 #ifdef _DEBUG
 			shrinked[i].data.word = vertices_[(*std::next(vertices.cbegin(), i))].data.word;
 #endif

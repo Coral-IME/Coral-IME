@@ -64,6 +64,7 @@ CandidatePage CompositionSession::fetch_page(const std::string& condition, const
         // 失败的查询不能让旧输入的可选中候选残留。
         next.offset = offset;
     }
+    else source_->reset_composition();
     return next;
 }
 
@@ -90,6 +91,7 @@ Output CompositionSession::query_page(const std::string& condition, const std::s
 
 Output CompositionSession::reset()
 {
+    source_->reset_composition();
     const bool had_input = has_input();
     pinyin_.clear(); condition_.clear(); page_ = {}; mode_ = kModeQuanpin;
     return snapshot(had_input);
@@ -102,6 +104,7 @@ Output CompositionSession::select_index(int index_in_page)
     const auto prefix = converted_prefix(pinyin_, selected.pinyin);
     // 学习调用先于状态变更，异常时保持会话不变。
     source_->remember_selection(selected);
+    source_->reset_composition();
     const auto remaining = pinyin_.substr(prefix);
     if (remaining.empty())
     {
