@@ -10,15 +10,15 @@ namespace {
 struct Edge { int from, to; uint32_t id; float weight; };
 std::string_view word(uint32_t id) {
     switch (id) { case 12: return "甲"; case 13: return "乙"; case 14: return "丙";
-        case 15: return "甲乙"; default: return "丁"; }
+        case 15: return "甲乙"; case 16: return "吧"; case 17: return "把"; default: return "丁"; }
 }
 double decode(const std::vector<Edge>& edges, int length, uint32_t condition, float influence,
-    const coral::phonetics::ContextScorer& model, std::string* first = nullptr) {
+    const coral::phonetics::ContextScorer& model, std::string* first = nullptr, std::string_view input_text = {}) {
     using namespace coral::phonetics;
     support::ParseArenaScope arena;
     LexiconCatalog lexicon;
     CandidateLattice lattice;
-    const std::string input(length, 'a');
+    const std::string input = input_text.empty() ? std::string(length, 'a') : std::string(input_text);
     lattice.init_graph(length + 1, input, lexicon);
     for (int i = 0; i <= length; ++i) lattice.set_input_offset(i, i);
     for (const auto& edge : edges) {
@@ -90,6 +90,8 @@ int main(int argc, char** argv) {
                     }
                 }
             }
+            const std::string trial_input = trial % 2 ? std::string(length-2,'a')+"ba" : std::string(length,'a');
+            if (trial % 2) edges.push_back({length-2,length,16,-.2f});
             const uint32_t condition = trial % 3 ? 12 : kInvalidPhraseId;
             const float influence = trial % 2 ? .7f : 0.f;
             double expected = std::numeric_limits<double>::infinity();
@@ -100,25 +102,31 @@ int main(int argc, char** argv) {
                     const double reward = expected_bonus(first ? (external ? condition : 0) : previous, edge.id);
                     // 未知词之后只是断开上下文，不能误当作新的句首。
                     const double actual = !first && previous == 99 ? 0 : reward;
-                    visit(edge.to, edge.id, false, cost - edge.weight - (external ? influence : 1.) * actual);
+                    const double terminal = trial % 2 && edge.to == length && edge.from == length-2 && edge.id == 16 ? 1. : 0.;
+                    visit(edge.to, edge.id, false, cost - edge.weight - (external ? influence : 1.) * actual - terminal);
                 }
             };
             visit(0,0,true,0);
-            const auto actual = decode(edges,length,condition,influence,model);
+            const auto actual = decode(edges,length,condition,influence,model,nullptr,trial_input);
             if (std::abs(actual - expected) > 1e-4) {
                 std::cerr << "Bonus DAG mismatch " << trial << ' ' << actual << ' ' << expected; return 8;
             }
             std::string baseline, empty;
-            const auto base = decode(edges,length,condition,influence,plain,&baseline);
-            const auto off = decode(edges,length,condition,influence,zero,&empty);
+            const auto base = decode(edges,length,condition,influence,plain,&baseline,trial_input);
+            const auto off = decode(edges,length,condition,influence,zero,&empty,trial_input);
             if (base != off || baseline != empty) return 9;
         }
+        // 高词对奖励和末尾奖励同时存在时，搜索势差必须精确还原原始总分。
+        std::string terminal_first;
+        const auto terminal_cost=decode({{0,1,12,-1.f},{1,2,13,-1.f},
+            {2,4,16,-.8f},{2,4,17,-.1f}},4,kInvalidPhraseId,1.f,model,&terminal_first,"aaba");
+        if (terminal_first!="甲乙吧" || std::abs(terminal_cost+6.2)>1e-4) return 19;
         // 整词内部不拆分计奖；完整词库候选继续由基础权重决定。
         std::string first;
         decode({{0,1,12,-.1f},{0,1,13,-2.f}},1,12,1.f,model,&first);
         if (first != "甲") return 10;
         {
-            // 原前缀稳定机制必须叠加在新奖励路径上，五字内不罚，强证据仍可翻转。
+            // 原前缀稳定机制必须叠加在新奖励路径上，七字内不罚，强证据仍可翻转。
             PrefixStability history, independent;
             history.prepare("", "aaaa", 0);
             history.observe("乙丁甲乙", "a'a'a'a");
@@ -134,16 +142,18 @@ int main(int argc, char** argv) {
             };
             {
                 PrefixStabilityScope scope(anchors);
-                decode(edges(5,.7f),5,kInvalidPhraseId,1.f,model,&first);
-                if (first != "甲丁甲乙丁") return 13;
-                decode(edges(6,.7f),6,kInvalidPhraseId,1.f,model,&first);
-                if (first != "乙丁甲乙丁丁") return 14;
-                decode(edges(6,4.f),6,kInvalidPhraseId,1.f,model,&first);
-                if (first != "甲丁甲乙丁丁") return 15;
+                decode(edges(7,.7f),7,kInvalidPhraseId,1.f,model,&first);
+                if (first != "甲丁甲乙丁丁丁") return 13;
+                decode(edges(8,.7f),8,kInvalidPhraseId,1.f,model,&first);
+                if (first != "乙丁甲乙丁丁丁丁") return 14;
+                decode(edges(8,1.f),8,kInvalidPhraseId,1.f,model,&first);
+                if (first != "甲丁甲乙丁丁丁丁") return 18;
+                decode(edges(8,4.f),8,kInvalidPhraseId,1.f,model,&first);
+                if (first != "甲丁甲乙丁丁丁丁") return 15;
             }
             // 没有该会话的历史时，同一新模型仍选择基础证据更强的首词。
-            decode(edges(6,.7f),6,kInvalidPhraseId,1.f,model,&first);
-            if (first != "甲丁甲乙丁丁") return 16;
+            decode(edges(8,.7f),8,kInvalidPhraseId,1.f,model,&first);
+            if (first != "甲丁甲乙丁丁丁丁") return 16;
             history.reset();
             if (!history.prepare("", "aaaaaa", 0).empty()) return 17;
         }

@@ -72,6 +72,82 @@ double decode(const std::vector<Edge>& edges, int length, uint32_t condition,
     if (first) *first = solutions.front().sentence;
     return shortest;
 }
+struct TerminalEdge { int from, to; std::string_view word, reading; float weight; };
+std::pair<std::string,double> terminal_decode(std::string_view input,
+    const std::vector<TerminalEdge>& edges, float bonus = 1.0f, int correction = 0) {
+    using namespace coral::phonetics;
+    support::ParseArenaScope arena;
+    LexiconCatalog lexicon;
+    ContextScorer model;
+    CandidateLattice lattice;
+    lattice.init_graph(static_cast<int>(input.size()+1), input, lexicon);
+    for (const auto& edge : edges) {
+        ParseTextViews readings;
+        for (size_t at = 0; at < edge.reading.size();) {
+            const auto end = edge.reading.find('\'', at);
+            const auto size = (end == std::string_view::npos ? edge.reading.size() : end) - at;
+            readings.push_back(edge.reading.substr(at, size)); at += size + 1;
+        }
+        PhoneticSequence sequence(readings, {}, edge.from, edge.to, 3, false, false);
+        sequence.is_fuzzy_match_ = correction == 1;
+        sequence.is_edit_corrected_ = correction == 2;
+        ParsePhrases phrases;
+        phrases.emplace_back(edge.word, std::string(edge.reading), edge.weight, 100, 0.f);
+        phrases.back().is_corrected = correction == 3;
+        bool hit=false, english=false, span=false;
+        if (!lattice.process_phrases(phrases, sequence, lexicon, false, 25,
+            static_cast<int>(input.size()+1), false, {}, std::string(input), hit, english, span))
+            throw std::runtime_error("Cannot build terminal fixture");
+    }
+    CandidateDecoder decoder;
+    decoder.set_terminal_bonus(bonus);
+#if CORAL_ENABLE_CHARACTER_MODEL
+    decoder.set_smart_candidates(false);
+#endif
+    if (!decoder.init(lattice, model)) throw std::runtime_error("Cannot initialize terminal fixture");
+    vector<CandidateResult> results; ParseTextSet seen; float cost=kMaxWeight;
+    if (!decoder.get_parsed_res(results, {}, seen, {}, cost)) throw std::runtime_error("No terminal result");
+    return {results.front().sentence, cost};
+}
+
+void check_terminal_bonus() {
+    const std::pair<std::string_view,std::string_view> alternatives[]{
+        {"啊","阿"},{"吗","马"},{"吧","把"},{"呢","讷"},{"呀","压"},{"啦","拉"}};
+    const std::string_view readings[]{"a","ma","ba","ne","ya","la"};
+    for (size_t i=0;i<6;++i) {
+        const int end=static_cast<int>(readings[i].size());
+        const std::vector<TerminalEdge> edges{{0,end,alternatives[i].first,readings[i],-.7f},
+            {0,end,alternatives[i].second,readings[i],-.1f}};
+        if (terminal_decode(readings[i],edges).first!=alternatives[i].first ||
+            terminal_decode(readings[i],edges,0).first!=alternatives[i].second)
+            throw std::runtime_error("Terminal direct reward mismatch");
+    }
+    const std::vector<TerminalEdge> split{{0,2,"你","ni",-.1f},{2,5,"好","hao",-.1f},
+        {5,7,"吧","ba",-.2f},{5,7,"把","ba",-.1f}};
+    const std::vector<TerminalEdge> compound{{0,2,"你","ni",-.1f},
+        {2,7,"好吧","hao'ba",-.3f},{2,7,"好把","hao'ba",-.2f}};
+    const auto a=terminal_decode("nihaoba",split), b=terminal_decode("nihaoba",compound);
+    if (a.first!="你好吧" || b.first!=a.first || std::abs(a.second+.6)>1e-5 ||
+        std::abs(b.second-a.second)>1e-5 || terminal_decode("nihaoba",split,0).first!="你好把")
+        throw std::runtime_error("Terminal search reward or segmentation mismatch");
+    const auto full=terminal_decode("nihaoba",{{0,7,"你好吧","ni'hao'ba",-.4f},
+        {0,7,"你好把","ni'hao'ba",-.3f}});
+    if (full.first!=a.first || std::abs(full.second-a.second)>1e-5)
+        throw std::runtime_error("Terminal full dictionary reward mismatch");
+    if (terminal_decode("bani",{{0,2,"吧","ba",-.2f},{0,2,"把","ba",-.1f},
+            {2,4,"你","ni",-.1f}}).first!="把你" ||
+        terminal_decode("b",{{0,1,"吧","b",-.2f},{0,1,"把","b",-.1f}}).first!="把" ||
+        terminal_decode("ni",{{0,2,"呢","ni",-.2f},{0,2,"泥","ni",-.1f}}).first!="泥" ||
+        terminal_decode("ba",{{0,2,"吧","ba",-2.f},{0,2,"把","ba",-.1f}}).first!="把")
+        throw std::runtime_error("Terminal scope or bounded reward mismatch");
+    for (int mode=1;mode<=3;++mode)
+        if (terminal_decode("nihaoba",split,1,mode).first!="你好把")
+            throw std::runtime_error("Corrected arc received terminal reward");
+    if (terminal_decode("niba",{{0,2,"你","ni",-.1f},{2,4,"ba","ba",-.2f},
+            {2,4,"把","ba",-.1f}}).first!="你把")
+        throw std::runtime_error("Non-Chinese terminal received reward");
+}
+
 double enumerate(const std::vector<Edge>& edges, int length, uint32_t condition, double influence) {
     double best = std::numeric_limits<double>::infinity();
     std::function<void(int,uint32_t,bool,double)> visit = [&](int at, uint32_t context, bool pending, double cost) {
@@ -90,6 +166,7 @@ double enumerate(const std::vector<Edge>& edges, int length, uint32_t condition,
 }
 
 int main(int argc, char** argv) {
+    try { check_terminal_bonus(); } catch (const std::exception& e) { std::cerr<<e.what(); return 58; }
     if (argc == 5 && std::string(argv[4]) == "reading-priors") {
         coral::phonetics::ContextScorer pronunciation_model;
         std::string error;
@@ -158,18 +235,23 @@ int main(int argc, char** argv) {
         };
         {
             PrefixStabilityScope scope(anchors);
-            // 字数门槛按输出汉字计数，恰好五字不加罚，第六字才保护先前首选。
-            decode(weak_edges(5,.2f),5,kInvalidPhraseId,1.f,empty_model,&first);
-            if (first != "在在在在在") return 41;
+            // 字数门槛按输出汉字计数，六、七字不加罚，第八字才保护先前首选。
             decode(weak_edges(6,.2f),6,kInvalidPhraseId,1.f,empty_model,&first);
-            if (first != "再在在在在在") return 42;
+            if (first != "在在在在在在") return 41;
+            decode(weak_edges(7,.2f),7,kInvalidPhraseId,1.f,empty_model,&first);
+            if (first != "在在在在在在在") return 54;
+            decode(weak_edges(8,.2f),8,kInvalidPhraseId,1.f,empty_model,&first);
+            if (first != "再在在在在在在在") return 42;
+            // 减半后的弱保护允许中等强度的新证据改回首字。
+            decode(weak_edges(8,.5f),8,kInvalidPhraseId,1.f,empty_model,&first);
+            if (first != "在在在在在在在在") return 55;
             // 新证据足够强时可以纠正；每轮重新计罚，不累积上轮奖励。
-            decode(weak_edges(6,4.f),6,kInvalidPhraseId,1.f,empty_model,&first);
-            if (first != "在在在在在在") return 43;
-            auto short_interpretation = weak_edges(6,.2f);
+            decode(weak_edges(8,4.f),8,kInvalidPhraseId,1.f,empty_model,&first);
+            if (first != "在在在在在在在在") return 43;
+            auto short_interpretation = weak_edges(8,.2f);
             short_interpretation.push_back({0,2,99,-100.f});
-            decode(short_interpretation,6,kInvalidPhraseId,1.f,empty_model,&first);
-            if (first != "在在在在在在") return 53;
+            decode(short_interpretation,8,kInvalidPhraseId,1.f,empty_model,&first);
+            if (first != "在在在在在在在在") return 53;
             decode({{0,6,19,-1.f}},6,kInvalidPhraseId,1.f,empty_model,&first);
             if (first != "在在在在在在") return 44;
         }
@@ -192,7 +274,18 @@ int main(int argc, char** argv) {
         {
             PrefixStabilityScope scope(history.prepare("", "aaaaaaaaaaaa", 0));
             decode(weak_edges(6,.2f),6,kInvalidPhraseId,1.f,empty_model,&first,0,true,2);
-            if (first != "再在在在在在") return 51;
+            if (first != "在在在在在在") return 51;
+            decode(weak_edges(8,.2f),8,kInvalidPhraseId,1.f,empty_model,&first,0,true,2);
+            if (first != "再在在在在在在在") return 56;
+        }
+        {
+            // 多个成熟锚点同时改写时，整句保护代价仍封顶为减半后的上限。
+            const std::vector<PrefixAnchor> mature{{0,1,"再",4},{1,2,"再",4},
+                {2,3,"再",4},{3,4,"再",4}};
+            std::vector<Edge> fixed;
+            for (int i = 0; i < 8; ++i) fixed.push_back({i,i+1,12,-1.f});
+            PrefixStabilityScope scope(mature);
+            if (std::abs(decode(fixed,8,kInvalidPhraseId,1.f,empty_model) - 9.5) > 1e-5) return 57;
         }
     }
     const double unknown = decode({{0,1,99,-.15f},{1,2,13,-12.f}}, 2, 12, .7f, model);

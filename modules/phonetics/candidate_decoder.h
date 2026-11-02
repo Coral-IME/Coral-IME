@@ -33,6 +33,10 @@ public:
         condition_influence_ = influence > 0.0f ? (influence < 1.0f ? influence : 1.0f) : 0.0f;
         condition_id_ = condition_influence_ > 0.0f ? id : kInvalidPhraseId;
     }
+    // 供原生对照设置末尾奖励；零关闭，非有限值不参与评分，最多加两档。
+    void set_terminal_bonus(float bonus) {
+        terminal_bonus_ = std::isfinite(bonus) && bonus > 0 ? (bonus < 2.0f ? bonus : 2.0f) : 0.0f;
+    }
 	void set_direct_candidate_budget(const int budget) { direct_candidate_budget_ = budget; }
 #if CORAL_ENABLE_CHARACTER_MODEL
     void set_character_context(std::string_view text) { character_context_.assign(text); }
@@ -131,7 +135,9 @@ private:
 	int direct_candidate_budget_{ kUnlimitedDirectCandidates };
 	bool candidates_truncated_ = false;
     std::vector<uint32_t> pair_bonus_arc_states_;
-    double pair_bonus_shift_ = 0;
+    double search_cost_shift_ = 0;
+    std::vector<double> terminal_arc_bonuses_;
+    float terminal_bonus_ = 1.0f;
     bool full_dictionary_hit_ = false;
     uint32_t condition_id_ = kInvalidPhraseId;
     float condition_influence_ = 0.7f;

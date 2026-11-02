@@ -21,7 +21,9 @@ namespace
 {
 	constexpr int kPathCandidateLimit = 32;
 	constexpr int kStateBestCap = 8;
-    constexpr double kPrefixPenaltyCap = 3.0;
+    constexpr unsigned kPrefixProtectionMinHan = 8;
+    constexpr double kPrefixPenaltyScale = 0.5;
+    constexpr double kPrefixPenaltyCap = 1.5;
     thread_local const std::vector<coral::phonetics::PrefixAnchor>* active_prefix = nullptr;
 
     // 仅汉字参与稳定策略；英文、符号和无效 UTF-8 不建立锚点。
@@ -68,6 +70,34 @@ namespace
         }
         while (at < static_cast<size_t>(to) && input[at] == '\'') ++at;
         return !complete || at == static_cast<size_t>(to);
+    }
+
+    struct TerminalRule { std::string_view suffix, reading; };
+    constexpr TerminalRule kTerminalRules[] = {
+        {"啊", "a"}, {"吗", "ma"}, {"吧", "ba"},
+        {"呢", "ne"}, {"呀", "ya"}, {"啦", "la"}
+    };
+
+    double terminal_arc_bonus(const coral::phonetics::CandidateArc& arc,
+        const coral::phonetics::CandidateLattice& lattice, double bonus) {
+        if (bonus <= 0 || arc.from < 0 || arc.from >= arc.to ||
+            arc.to != lattice.get_vertex_count() - 1 || !arc.data.is_usable()) return 0;
+        const auto& data = arc.data;
+        const auto& sequence = data.pinyin_sequence();
+        if (!data.dictionary_match || data.is_corrected || data.english_context_only ||
+            sequence.is_match_english_vocab_ || sequence.is_fuzzy_match_ || sequence.is_edit_corrected_) return 0;
+        const auto& readings = sequence.get_ui_show_pinyin_sequence();
+        if (readings.empty()) return 0;
+        for (const auto& rule : kTerminalRules) {
+            if (readings.back() != rule.reading || data.phrase.size() < rule.suffix.size() ||
+                data.phrase.substr(data.phrase.size() - rule.suffix.size()) != rule.suffix) continue;
+            std::vector<coral::phonetics::PrefixAnchor> aligned;
+            if (!align_cells(data.phrase, readings, lattice.input_pinyin(),
+                lattice.input_offset(arc.from), lattice.input_offset(arc.to), aligned)) return 0;
+            // 只在整句最后一条精确中文弧上计奖，整词和拆词获得相同的一次奖励。
+            return bonus;
+        }
+        return 0;
     }
 
     double model_input_penalty(const coral::phonetics::CandidateEdgePayload& data,
@@ -341,6 +371,13 @@ bool coral::phonetics::CandidateDecoder::init(const coral::phonetics::CandidateL
 		}
 	}
 
+    terminal_arc_bonuses_.assign(arcs.size(), 0);
+    double terminal_shift = 0;
+    for (size_t i = 0; i < arcs.size(); ++i) {
+        terminal_arc_bonuses_[i] = terminal_arc_bonus(arcs[i], wordLattice, terminal_bonus_);
+        terminal_shift = std::max(terminal_shift, terminal_arc_bonuses_[i]);
+    }
+
     // 全串精确命中词库时只组装词库候选，不构建语言模型启发值或搜索组句路径。
     full_dictionary_hit_ = std::any_of(arcs.begin(), arcs.end(), [&](const auto& arc) {
         return is_full_dictionary_arc(arc, vertexCount - 1);
@@ -374,10 +411,10 @@ bool coral::phonetics::CandidateDecoder::init(const coral::phonetics::CandidateL
                 const bool same = matched && std::any_of(aligned.begin(), aligned.end(), [&](const auto& cell) {
                     return cell.begin == anchor.begin && cell.end == anchor.end && cell.text == anchor.text;
                 });
-                if (!same) prefix_arc_penalties_[i] += .5 + .25 * std::min(4u, anchor.age);
+                if (!same) prefix_arc_penalties_[i] += kPrefixPenaltyScale * (.5 + .25 * std::min(4u, anchor.age));
             }
         }
-        // 存在短的完整中文解释时整轮暂缓，避免长备选的惩罚间接改变五字内的神经短名单。
+        // 存在短的完整中文解释时整轮暂缓，避免长备选的惩罚间接改变七字内的神经短名单。
         std::vector<unsigned> minimum_han(vertexCount, (std::numeric_limits<unsigned>::max)());
         minimum_han.back() = 0;
         for (int from = vertexCount - 2; from >= 0; --from) {
@@ -389,7 +426,7 @@ bool coral::phonetics::CandidateDecoder::init(const coral::phonetics::CandidateL
                 minimum_han[from] = std::min(minimum_han[from], arc_han_counts_[index] + minimum_han[arc.to]);
             }
         }
-        if (minimum_han[0] <= 5) prefix_anchors_ = nullptr;
+        if (minimum_han[0] < kPrefixProtectionMinHan) prefix_anchors_ = nullptr;
     }
 
 	// A* 启发值来自与 FstDecoder::computeCsrHeuristic 相同的后向 DP：
@@ -397,7 +434,7 @@ bool coral::phonetics::CandidateDecoder::init(const coral::phonetics::CandidateL
 	// 权重取负得到非负步长，保证 h 可采纳，f = g + h 的展开顺序有效。
 	constexpr double kInf = std::numeric_limits<double>::infinity();
 	const auto* pair_bonus = languageModel.pair_bonus_model();
-    pair_bonus_shift_ = pair_bonus ? pair_bonus->max_bonus() : 0;
+    search_cost_shift_ = (pair_bonus ? pair_bonus->max_bonus() : 0) + terminal_shift;
     pair_bonus_arc_states_.assign(pair_bonus ? arcs.size() : 0, 0);
     if (pair_bonus) for (size_t i = 0; i < arcs.size(); ++i) {
         const auto& data = arcs[i].data;
@@ -428,11 +465,11 @@ bool coral::phonetics::CandidateDecoder::init(const coral::phonetics::CandidateL
                 }
 				double step = std::max(0.0, -static_cast<double>(weight));
                 if (pair_bonus) {
-                    // 每条完整路径增加同一势差，保持奖励原值并使搜索边非负。
                     step = std::max(0.0, -static_cast<double>(arc.data.weight)) -
-                        pair_bonus->best_bonus(pair_bonus_arc_states_[edge_indices_[index]]) +
-                        pair_bonus_shift_ * (arc.to - position);
+                        pair_bonus->best_bonus(pair_bonus_arc_states_[edge_indices_[index]]);
                 }
+                // 末尾奖励也进入可采纳下界；统一势差使所有搜索边保持非负。
+                step += search_cost_shift_ * (arc.to - position) - terminal_arc_bonuses_[edge_indices_[index]];
 				heuristic[position] = std::min(heuristic[position], step + heuristic[arc.to]);
 				if (mixed && (english || can_reach_english_[arc.to])) can_reach_english_[position] = 1;
 			}
@@ -504,7 +541,7 @@ bool coral::phonetics::CandidateDecoder::build_path_solution(const int nodeIndex
 	}
 
 	const SearchNode& leaf = search_nodes_[nodeIndex];
-	solution.probability = static_cast<coral::phonetics::Score>(-leaf.cost + pair_bonus_shift_ * leaf.position);
+	solution.probability = static_cast<coral::phonetics::Score>(-leaf.cost + search_cost_shift_ * leaf.position);
 	solution.set_probability_with_weight(
 		static_cast<coral::phonetics::Score>(1.0f / (1.0f + static_cast<coral::phonetics::Score>(pinyinCharLength))));
 	if (pathArcs.size() == 1)
@@ -701,7 +738,7 @@ bool coral::phonetics::CandidateDecoder::find_best_paths(
 		{
 			if (requireEnglish && !current.hasEnglish) continue;
 			if (shortestPathCost == kMaxWeight)
-				shortestPathCost = static_cast<coral::phonetics::Score>(current.cost - pair_bonus_shift_ * targetPosition);
+				shortestPathCost = static_cast<coral::phonetics::Score>(current.cost - search_cost_shift_ * targetPosition);
 			if (!collect_path_sentence(currentItem.nodeIndex, pathArcs, sentence_buffer_))
 				continue;
 			if (!acceptedSentences.insert(sentence_buffer_).second)
@@ -767,8 +804,7 @@ bool coral::phonetics::CandidateDecoder::find_best_paths(
                     pair_bonus->word_state("<s>") : current.gState;
                 const double bonus = pair_bonus->bonus(previous, nextGState);
                 const double influence = current.condition_pending ? condition_influence_ : 1.0;
-                stepCost = std::max(0.0, -static_cast<double>(data.weight)) - influence * bonus +
-                    pair_bonus_shift_ * (arc.to - current.position);
+                stepCost = std::max(0.0, -static_cast<double>(data.weight)) - influence * bonus;
                 bigramHit = bonus > 0;
             }
             else if (surface) {
@@ -842,6 +878,7 @@ bool coral::phonetics::CandidateDecoder::find_best_paths(
                 } else ordinary_cost = std::max(0.0, -static_cast<double>(uni[data.phrase_id].weight));
                 stepCost = condition_weight(ordinary_cost, stepCost);
             }
+            stepCost += search_cost_shift_ * (arc.to - current.position) - terminal_arc_bonuses_[arcIndex];
 			SearchNode next;
             next.condition_pending = !pair_bonus && !surface && current.condition_pending && !inModel && !english;
 			next.hasEnglish = current.hasEnglish || english;
@@ -853,13 +890,13 @@ bool coral::phonetics::CandidateDecoder::find_best_paths(
             next.text_hash = current.text_hash;
             for (unsigned char byte : data.phrase) { next.text_hash ^= byte; next.text_hash *= 1099511628211ULL; }
             next.text_size = current.text_size + data.phrase.size();
-            // 先记本轮从零计算的惩罚，达到第六个汉字才计入搜索代价。
-            // 前五字始终保留原分数，启发值不含惩罚，仍是可采纳下界。
+            // 先记本轮从零计算的惩罚，达到第八个汉字才计入搜索代价。
+            // 前七字始终保留原分数，启发值不含惩罚，仍是可采纳下界。
             if (!requireEnglish && prefix_anchors_ && !prefix_anchors_->empty()) {
-                next.han_count = std::min(6u, current.han_count + arc_han_counts_[arcIndex]);
+                next.han_count = std::min(kPrefixProtectionMinHan, current.han_count + arc_han_counts_[arcIndex]);
                 next.prefix_debt = std::min(kPrefixPenaltyCap, current.prefix_debt + prefix_arc_penalties_[arcIndex]);
-                next.cost += (next.han_count > 5 ? next.prefix_debt : 0) -
-                    (current.han_count > 5 ? current.prefix_debt : 0);
+                next.cost += (next.han_count >= kPrefixProtectionMinHan ? next.prefix_debt : 0) -
+                    (current.han_count >= kPrefixProtectionMinHan ? current.prefix_debt : 0);
             }
 			next.wordCount = static_cast<uint16_t>(std::min<int>(current.wordCount + 1,
 				(std::numeric_limits<uint16_t>::max)()));
@@ -1029,8 +1066,6 @@ bool coral::phonetics::CandidateDecoder::get_parsed_res(
 					return sum + static_cast<int>(pinyin.size());
 				});
             double direct_weight = data.weight;
-            if (full_dictionary_hit_ && is_full_dictionary_arc(arcs[static_cast<size_t>(arcIndex)], vertexCount - 1))
-                shortestPathCost = std::min(shortestPathCost, -data.weight);
             if (!full_dictionary_hit_) {
                 direct_weight = condition_id_ == kInvalidPhraseId ? data.weight :
                     condition_weight(data.weight, std::max(data.weight,
@@ -1053,6 +1088,9 @@ bool coral::phonetics::CandidateDecoder::get_parsed_res(
                             0 : bonus->word_state(data.phrase));
                 }
             }
+            direct_weight += terminal_arc_bonuses_[arcIndex];
+            if (full_dictionary_hit_ && is_full_dictionary_arc(arcs[static_cast<size_t>(arcIndex)], vertexCount - 1))
+                shortestPathCost = std::min(shortestPathCost, static_cast<coral::phonetics::Score>(-direct_weight));
 			directs.push_back(DirectRef{ arcIndex, data.phrase, pinyinLength,
                 static_cast<coral::phonetics::Score>(direct_weight) * pinyinWeightOf(pinyinLength), false });
 			dedup.commit(probe, static_cast<int32_t>(directs.size()) - 1);
