@@ -8,7 +8,7 @@ add_executable(coral_table_restore main.cpp
 target_include_directories(coral_table_restore PRIVATE
     ${XZ_EMBEDDED_DIR}/linux/include/linux ${XZ_EMBEDDED_DIR}/userspace)
 target_compile_definitions(coral_table_restore PRIVATE XZ_USE_CRC64)
-target_link_libraries(coral_table_restore PRIVATE Bcrypt)
+target_link_libraries(coral_table_restore PRIVATE Bcrypt coral::language_model)
 coral_target_common(coral_table_restore)
 if(BUILD_TESTING)
     add_test(NAME compact_runtime_tables COMMAND ${Python3_EXECUTABLE}

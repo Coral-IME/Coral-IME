@@ -952,7 +952,15 @@
     "tests/language_model/CMakeLists.txt",
     "tests/language_model/surface_model_test.cpp",
     "tests/language_model/surface_decoder_test.cpp",
-    "tests/language_model/test_format.py"
+    "tests/language_model/test_format.py",
+    "include/coral/language_model/pair_bonus_model.h",
+    "modules/language_model/pair_bonus_model.cpp",
+    "tools/data/build_pair_bonus.py",
+    "tests/language_model/pair_bonus_test.cpp",
+    "tests/language_model/test_pair_bonus.py",
+    "docs/pair_bonus_model.md",
+    "tools/release/prepare_optimized_runtime.py",
+    "tests/release/test_pair_bonus_packaging.py"
   ],
   "third_party_prefixes": [
     "src/lib/",

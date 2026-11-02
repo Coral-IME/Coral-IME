@@ -130,6 +130,8 @@ private:
 	std::string extended_match_;
 	int direct_candidate_budget_{ kUnlimitedDirectCandidates };
 	bool candidates_truncated_ = false;
+    std::vector<uint32_t> pair_bonus_arc_states_;
+    double pair_bonus_shift_ = 0;
     bool full_dictionary_hit_ = false;
     uint32_t condition_id_ = kInvalidPhraseId;
     float condition_influence_ = 0.7f;

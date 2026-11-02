@@ -13,6 +13,7 @@
 #include "../storage/phrase_archive_view.hpp"
 #include "verified_resource.h"
 #include "coral/language_model/surface_model.h"
+#include "coral/language_model/pair_bonus_model.h"
 #if CORAL_ENABLE_CHARACTER_MODEL
 #include "coral/language_model/character_model.h"
 #endif
@@ -36,13 +37,22 @@ public:
 
 	// 组合解码接口：直接暴露 languagemodel.coral 模型视图
 	const coral::phonetics::BigramTable* gbin() const {
-        return !surface_model_.valid() && gbin_view_.valid() ? &gbin_view_.model() : nullptr;
+        return !pair_bonus_loaded_ && !surface_model_.valid() && gbin_view_.valid() ? &gbin_view_.model() : nullptr;
     }
     const coral::language_model::SurfaceModel* surface_model() const {
         return surface_model_.valid() ? &surface_model_ : nullptr;
     }
     bool load_surface_model(const filesystem::path& model, const filesystem::path& lexicon,
         std::string& error);
+    bool load_pair_bonus_model(const filesystem::path& model, const filesystem::path& lexicon,
+        std::string& error);
+    const coral::language_model::PairBonusModel* pair_bonus_model() const {
+        return pair_bonus_loaded_ && pair_bonus_.max_bonus() > 0 ? &pair_bonus_ : nullptr;
+    }
+    uint32_t pair_bonus_state(uint32_t phrase_id) const {
+        const auto found = pair_bonus_states_.find(phrase_id);
+        return found == pair_bonus_states_.end() ? 0 : found->second;
+    }
     // 读音是输入观测，不改变词面语言模型的一元、二元或回退概率。
     double reading_log_prior(uint32_t phrase_id) const {
         const auto found = reading_log_priors_.find(phrase_id);
@@ -68,6 +78,9 @@ private:
 	coral::storage::BigramMappedView gbin_view_;
     coral::language_model::SurfaceModel surface_model_;
     std::unordered_map<uint32_t, double> reading_log_priors_;
+    coral::language_model::PairBonusModel pair_bonus_;
+    std::unordered_map<uint32_t, uint32_t> pair_bonus_states_;
+    bool pair_bonus_loaded_ = false;
 #if CORAL_ENABLE_CHARACTER_MODEL
     std::shared_ptr<const coral::language_model::CharacterModel> character_model_;
     double character_weight_ = 0;

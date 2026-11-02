@@ -12,6 +12,7 @@ import sys
 sys.dont_write_bytecode = True
 from paths import output_path
 from surface_model_format import HEADER as MODEL_HEADER
+from build_pair_bonus import inspect_pairs
 
 HEADER = struct.Struct('<8sII4Q32s32s32s')
 MAGIC = b'CSTPACK1'
@@ -186,11 +187,17 @@ def encode_parts(lexicon, model):
     require(len(lexicon) + len(model) <= MAX_BYTES, 'Restored pair exceeds 1 GiB limit')
     lex_hash = hashlib.sha256(lexicon).digest()
     lex = encode_lexicon(lexicon)
-    lm = encode_model(model, lex_hash)
+    flags = 3
+    if model[:8] == b'CBGN0001':
+        inspect_pairs(model)
+        lm = model
+        flags = 7
+    else:
+        lm = encode_model(model, lex_hash)
     require(HEADER.size + len(lex) + len(lm) <= MAX_BYTES, 'Encoded pair exceeds 1 GiB limit')
     body = hashlib.sha256(lex)
     body.update(lm)
-    header = HEADER.pack(MAGIC, 1, 3, len(lexicon), len(model), len(lex), len(lm),
+    header = HEADER.pack(MAGIC, 1, flags, len(lexicon), len(model), len(lex), len(lm),
                          lex_hash, hashlib.sha256(model).digest(), body.digest())
     return header, lex, lm
 
@@ -211,7 +218,7 @@ def pack_tables(tables_dir, output):
     # Windows同目录提交，拒绝覆盖已有包；失败的partial保留供检查。
     require(not output.exists(), 'Output already exists')
     os.rename(temporary, output)
-    info = {'format': 'CSTPACK1', 'version': 1, 'flags': 3, 'lossless': True, 'compressed_bytes': output.stat().st_size,
+    info = {'format': 'CSTPACK1', 'version': 1, 'flags': HEADER.unpack(parts[0])[2], 'lossless': True, 'compressed_bytes': output.stat().st_size,
             'encoded_bytes': sum(map(len, parts)), 'sha256': hashlib.sha256(output.read_bytes()).hexdigest(),
             'files': {name: {'size': p.stat().st_size, 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()}
                       for name, p in [('mainlexicon.coral', lex_path), ('languagemodel.coral', model_path)]}}

@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/data'))
 from compact_tables import encode_parts, HEADER
 from surface_model_format import encode_model
+from build_pair_bonus import encode_pairs
 
 RESTORE = Path(sys.argv.pop(1)).resolve() if len(sys.argv) > 1 and sys.argv[1].lower().endswith('.exe') else None
 
@@ -44,6 +45,14 @@ def fixture():
 
 
 class EncodingTest(unittest.TestCase):
+    def test_pair_bonus_has_separate_flags_and_no_dictionary_binding(self):
+        lex, _ = fixture()
+        model = encode_pairs([('甲','乙',1.25)])
+        h, a, b = encode_parts(lex,model)
+        self.assertEqual(HEADER.unpack(h)[:3], (b'CSTPACK1',1,7))
+        self.assertEqual(b,model)
+        damaged = bytearray(model); damaged[-1] ^= 1
+        with self.assertRaises(ValueError): encode_parts(lex,damaged)
     def test_rejects_wrong_pair_or_noncanonical_input(self):
         lex, model = fixture()
         h, a, b = encode_parts(lex, model)
@@ -84,6 +93,24 @@ class RestoreTest(unittest.TestCase):
         self.assertEqual((self.dest / 'languagemodel.coral').read_bytes(), self.model)
         self.assertNotEqual(self.run_restore().returncode, 0)
         self.assertEqual(self.run_restore(replace=True).returncode, 0)
+
+    def test_pair_bonus_and_empty_table_roundtrip(self):
+        for model in [encode_pairs([('甲','乙',1.25)]),encode_pairs([])]:
+            self.raw = b''.join(encode_parts(self.lex,model))
+            result = self.run_restore(replace=self.dest.exists())
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual((self.dest/'mainlexicon.coral').read_bytes(),self.lex)
+            self.assertEqual((self.dest/'languagemodel.coral').read_bytes(),model)
+        # 所有外层摘要都修复后，原生端仍须拒绝非有限增益，且保留已安装资源。
+        model=bytearray(encode_pairs([('甲','乙',1.25)]))
+        struct.pack_into('<f',model,80+2*8+8,float('nan'))
+        model[40:72]=hashlib.sha256(model[80:]).digest()
+        header,lex_section,good=encode_parts(self.lex,encode_pairs([('甲','乙',1.25)]))
+        raw=bytearray(header+lex_section+model)
+        raw[80:112]=hashlib.sha256(model).digest()
+        result=self.run_restore(raw=self.rehash(raw),replace=True)
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual((self.dest/'languagemodel.coral').read_bytes(),encode_pairs([]))
 
     def test_bad_archives_never_modify_previous_pair(self):
         self.dest.mkdir()

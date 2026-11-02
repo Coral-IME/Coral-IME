@@ -4,6 +4,8 @@
 
 正式入口统一位于 `tools/data/`、`tools/checks/`、`tools/release/` 和 `packaging/windows/`。旧 `src/script/` 入口只转发到新位置，参数改为下列显式路径，不再支持 `BUILD_DIR` 或旧目录层级推断。
 
+已有词库配套可编辑词对时，推荐[独立词对增益流程](pair_bonus_model.md)：`build_pair_bonus.py` 独立编译 TSV，`prepare_optimized_runtime.py` 冻结并收集资源，`package_windows.py` 核验安装端还原。下面的旧 CSV 概率模型生成链保留兼容用途，不用于重编独立增益模型。
+
 ## 输入与输出
 
 源目录需要以下文件，正式输入由调用者在公开代码之外提供：

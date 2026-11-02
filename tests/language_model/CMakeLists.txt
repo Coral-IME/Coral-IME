@@ -12,6 +12,22 @@ add_test(NAME character_model COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/test_character_model.py $<TARGET_FILE:coral_character_probe>)
 set_tests_properties(character_model PROPERTIES TIMEOUT 60)
 if(TARGET coral_engine_core)
+    add_test(NAME pair_bonus_packaging COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/tests/release/test_pair_bonus_packaging.py)
+    set_tests_properties(pair_bonus_packaging PROPERTIES TIMEOUT 60)
+    add_executable(pair_bonus_test pair_bonus_test.cpp)
+    target_link_libraries(pair_bonus_test PRIVATE coral_engine_core)
+    target_include_directories(pair_bonus_test PRIVATE
+        ../../src/common ../../src/lib ../../src/lib/marisa-trie/include
+        ../../modules/foundation ../../modules/preferences ../../modules/phonetics/script
+        ../../src/lib/opencc/deps/rapidjson-1.1.0)
+    target_compile_definitions(pair_bonus_test PRIVATE OS_WINDOW Opencc_BUILT_AS_STATIC)
+    coral_target_common(pair_bonus_test)
+    add_test(NAME pair_bonus COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/tools/checks/run_isolated.py
+        --user-root "${CMAKE_BINARY_DIR}/test-users/pair_bonus"
+        -- ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_pair_bonus.py $<TARGET_FILE:pair_bonus_test>)
+    set_tests_properties(pair_bonus PROPERTIES TIMEOUT 60)
     add_executable(surface_decoder_test surface_decoder_test.cpp)
     target_link_libraries(surface_decoder_test PRIVATE coral_engine_core)
     target_include_directories(surface_decoder_test PRIVATE

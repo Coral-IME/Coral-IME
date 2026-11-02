@@ -136,10 +136,54 @@ bool coral::phonetics::ContextScorer::load_surface_model(const filesystem::path&
         if (!build_reading_priors(lexicon, priors, error)) return false;
         surface_model_ = std::move(candidate);
         reading_log_priors_ = std::move(priors);
+        pair_bonus_.reset();
+        pair_bonus_states_.clear();
+        pair_bonus_loaded_ = false;
         return true;
     } catch (const std::exception& failure) {
         error = failure.what(); return false;
     }
+}
+
+bool coral::phonetics::ContextScorer::load_pair_bonus_model(const filesystem::path& model,
+    const filesystem::path& lexicon, std::string& error)
+{
+    try {
+        coral::language_model::PairBonusModel candidate;
+        if (!candidate.load_file(model, error)) return false;
+        // 主词库仅用于当前进程的编号缓存，增益文件不绑定其摘要或编号。
+        std::ifstream input(lexicon, std::ios::binary | std::ios::ate);
+        if (!input) { error = "Cannot open pair bonus lexicon cache source"; return false; }
+        const auto length = input.tellg();
+        if (length < std::streamoff(sizeof(coral::storage::LexiconFileHeader)) ||
+            uint64_t(length) > 1024ull * 1024 * 1024) {
+            error = "Invalid pair bonus lexicon cache source size"; return false;
+        }
+        std::vector<char> bytes(static_cast<size_t>(length));
+        input.seekg(0); input.read(bytes.data(), bytes.size());
+        coral::phonetics::LexiconTable table;
+        if (!input || !table.bind_data(bytes.data(), bytes.size())) {
+            error = "Invalid pair bonus lexicon cache source"; return false;
+        }
+        std::unordered_map<uint32_t, uint32_t> states;
+        for (uint32_t i = 0; i < table.entry_count(); ++i) {
+            const auto& entry = table.entries()[i];
+            const auto state = candidate.word_state(table.entry_word(entry));
+            if (state) {
+                const auto found = states.emplace(entry.phrase_id, state);
+                if (!found.second && found.first->second != state) {
+                    error = "Conflicting pair bonus phrase identity"; return false;
+                }
+            }
+        }
+        pair_bonus_ = std::move(candidate);
+        pair_bonus_states_ = std::move(states);
+        pair_bonus_loaded_ = true;
+        surface_model_.reset();
+        reading_log_priors_.clear();
+        error.clear();
+        return true;
+    } catch (const std::exception& failure) { error = failure.what(); return false; }
 }
 
 bool coral::phonetics::ContextScorer::load_g_bin_only(
@@ -162,6 +206,17 @@ bool coral::phonetics::ContextScorer::load_g_bin_only(
     std::ifstream input(gbinFile.path, std::ios::binary);
     char magic[8]{};
     input.read(magic, sizeof(magic));
+    if (input && std::memcmp(magic, "CBGN0001", 8) == 0) {
+        std::string error;
+        if (identifier.empty() || identifier != hlp::calculateFileMD5(gbinFile.path.string()) ||
+            !load_pair_bonus_model(gbinFile.path, gbinFile.path.parent_path() / "mainlexicon.coral", error)) {
+            LOG_ERROR("Pair bonus model rejected: " + error);
+            return false;
+        }
+        LOG_INFO("Pair bonus model loaded: pairs=" + std::to_string(pair_bonus_.pair_count()) +
+            " max_bonus=" + std::to_string(pair_bonus_.max_bonus()));
+        return true;
+    }
     if (input && std::memcmp(magic, "CSLM0001", 8) == 0) {
         std::string error;
         if (identifier.empty() || identifier != hlp::calculateFileMD5(gbinFile.path.string()) ||
@@ -181,6 +236,9 @@ bool coral::phonetics::ContextScorer::load_g_bin_only(
 	LOG_INFO("Langengine: bigram language model loaded from languagemodel.coral graph: " + gbinFile.path.string());
     surface_model_.reset();
     reading_log_priors_.clear();
+	pair_bonus_.reset();
+	pair_bonus_states_.clear();
+	pair_bonus_loaded_ = false;
 	return true;
 }
 

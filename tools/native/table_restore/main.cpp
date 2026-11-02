@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 #include "xz.h"
+#include "coral/language_model/pair_bonus_model.h"
 
 namespace {
 namespace fs = std::filesystem;
@@ -286,16 +287,25 @@ struct Pair { Bytes lexicon, model; };
 Pair decode(const Bytes& raw) {
     require(raw.size() >= kHeaderSize, "Compact header is truncated");
     const auto h = raw.data();
-    require(std::memcmp(h, "CSTPACK1", 8) == 0 && little(h + 8, 4) == 1 && little(h + 12, 4) == 3, "Unsupported compact header");
+    const auto flags = little(h + 12, 4);
+    require(std::memcmp(h, "CSTPACK1", 8) == 0 && little(h + 8, 4) == 1 && (flags == 3 || flags == 7), "Unsupported compact header");
     const auto ls = little(h + 16, 8), ms = little(h + 24, 8), le = little(h + 32, 8), me = little(h + 40, 8);
-    require(ls >= 64 && ms >= 128 && ls <= kMaxBytes && ms <= kMaxBytes - ls
+    require(ls >= 64 && ms >= (flags == 7 ? 80u : 128u) && ls <= kMaxBytes && ms <= kMaxBytes - ls
             && le >= 64 && le <= raw.size() - kHeaderSize && me == raw.size() - kHeaderSize - le, "Invalid compact section sizes");
     require(digest_matches(sha256(h + kHeaderSize, raw.size() - kHeaderSize), h + 112), "Compact body checksum mismatch");
     Pair result;
     result.lexicon = restore_lexicon({h + kHeaderSize, static_cast<size_t>(le)}, static_cast<size_t>(ls));
     const auto lex_hash = sha256(result.lexicon);
     require(digest_matches(lex_hash, h + 48), "Restored lexicon checksum mismatch");
-    result.model = restore_model({h + kHeaderSize + le, static_cast<size_t>(me)}, static_cast<size_t>(ms), lex_hash);
+    if (flags == 7) {
+        require(me == ms && ms <= 512ull * 1024 * 1024, "Invalid pair bonus section size");
+        result.model.assign(h + kHeaderSize + le, h + kHeaderSize + le + me);
+        coral::language_model::PairBonusModel model;
+        std::string error;
+        require(model.load(result.model.data(), result.model.size(), error), "Invalid restored pair bonus model");
+    } else {
+        result.model = restore_model({h + kHeaderSize + le, static_cast<size_t>(me)}, static_cast<size_t>(ms), lex_hash);
+    }
     require(digest_matches(sha256(result.model), h + 80), "Restored model checksum mismatch");
     return result;
 }

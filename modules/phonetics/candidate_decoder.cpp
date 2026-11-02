@@ -396,6 +396,14 @@ bool coral::phonetics::CandidateDecoder::init(const coral::phonetics::CandidateL
 	// 自终点向前松弛得到 h[i]（到终点的可达下界）；混合检索额外纳入 bigram 最优权重。
 	// 权重取负得到非负步长，保证 h 可采纳，f = g + h 的展开顺序有效。
 	constexpr double kInf = std::numeric_limits<double>::infinity();
+	const auto* pair_bonus = languageModel.pair_bonus_model();
+    pair_bonus_shift_ = pair_bonus ? pair_bonus->max_bonus() : 0;
+    pair_bonus_arc_states_.assign(pair_bonus ? arcs.size() : 0, 0);
+    if (pair_bonus) for (size_t i = 0; i < arcs.size(); ++i) {
+        const auto& data = arcs[i].data;
+        if (!data.pinyin_sequence().is_match_english_vocab_ && !data.english_context_only)
+            pair_bonus_arc_states_[i] = pair_bonus->word_state(data.phrase);
+    }
 	can_reach_english_.assign(vertexCount, 0);
 	for (bool mixed : {false, true}) {
 		auto& heuristic = mixed ? mixed_heuristic_ : heuristic_;
@@ -418,7 +426,13 @@ bool coral::phonetics::CandidateDecoder::init(const coral::phonetics::CandidateL
                     const double bound = surface->phrase_upper_bound(arc.data.phrase_id);
                     if (!english && std::isfinite(bound)) weight = bound + model_input_penalty(arc.data, languageModel);
                 }
-				const double step = std::max(0.0, -static_cast<double>(weight));
+				double step = std::max(0.0, -static_cast<double>(weight));
+                if (pair_bonus) {
+                    // 每条完整路径增加同一势差，保持奖励原值并使搜索边非负。
+                    step = std::max(0.0, -static_cast<double>(arc.data.weight)) -
+                        pair_bonus->best_bonus(pair_bonus_arc_states_[edge_indices_[index]]) +
+                        pair_bonus_shift_ * (arc.to - position);
+                }
 				heuristic[position] = std::min(heuristic[position], step + heuristic[arc.to]);
 				if (mixed && (english || can_reach_english_[arc.to])) can_reach_english_[position] = 1;
 			}
@@ -490,7 +504,7 @@ bool coral::phonetics::CandidateDecoder::build_path_solution(const int nodeIndex
 	}
 
 	const SearchNode& leaf = search_nodes_[nodeIndex];
-	solution.probability = static_cast<coral::phonetics::Score>(-leaf.cost);
+	solution.probability = static_cast<coral::phonetics::Score>(-leaf.cost + pair_bonus_shift_ * leaf.position);
 	solution.set_probability_with_weight(
 		static_cast<coral::phonetics::Score>(1.0f / (1.0f + static_cast<coral::phonetics::Score>(pinyinCharLength))));
 	if (pathArcs.size() == 1)
@@ -561,6 +575,7 @@ bool coral::phonetics::CandidateDecoder::find_best_paths(
 	// languagemodel.coral 缺失时退化为纯词格检索，所有指针判空兜底。
 	const coral::phonetics::BigramTable* g = language_model_->gbin();
     const auto* surface = language_model_->surface_model();
+    const auto* pair_bonus = language_model_->pair_bonus_model();
 	const coral::storage::BigramUnigramRecord* uni = (g != nullptr) ? g->uni() : nullptr;
 	const uint32_t uni_size = (g != nullptr) ? g->uni_size() : 0;
 	const uint32_t gStart = (g != nullptr) ? static_cast<uint32_t>(g->start()) : 0u;
@@ -584,6 +599,10 @@ bool coral::phonetics::CandidateDecoder::find_best_paths(
     }
     if (surface) {
         search_nodes_.back().gState = surface->phrase_end(condition_id_);
+        search_nodes_.back().condition_pending = search_nodes_.back().gState != 0;
+    }
+    if (pair_bonus) {
+        search_nodes_.back().gState = language_model_->pair_bonus_state(condition_id_);
         search_nodes_.back().condition_pending = search_nodes_.back().gState != 0;
     }
 	// 初始节点入队：f = g + h，起点 g = 0。
@@ -682,7 +701,7 @@ bool coral::phonetics::CandidateDecoder::find_best_paths(
 		{
 			if (requireEnglish && !current.hasEnglish) continue;
 			if (shortestPathCost == kMaxWeight)
-				shortestPathCost = static_cast<coral::phonetics::Score>(current.cost);
+				shortestPathCost = static_cast<coral::phonetics::Score>(current.cost - pair_bonus_shift_ * targetPosition);
 			if (!collect_path_sentence(currentItem.nodeIndex, pathArcs, sentence_buffer_))
 				continue;
 			if (!acceptedSentences.insert(sentence_buffer_).second)
@@ -741,7 +760,18 @@ bool coral::phonetics::CandidateDecoder::find_best_paths(
             const bool inModel = surface ? (!english && surface->score_phrase(current.gState,
                 data.phrase_id, surface_score)) : (g != nullptr && uni != nullptr &&
                 data.phrase_id < uni_size && uni[data.phrase_id].next >= 0);
-            if (surface) {
+            if (pair_bonus) {
+                if (data.weight == kLogInfiniteSimal) continue;
+                nextGState = pair_bonus_arc_states_[arcIndex];
+                const auto previous = current.wordCount == 0 && !current.condition_pending ?
+                    pair_bonus->word_state("<s>") : current.gState;
+                const double bonus = pair_bonus->bonus(previous, nextGState);
+                const double influence = current.condition_pending ? condition_influence_ : 1.0;
+                stepCost = std::max(0.0, -static_cast<double>(data.weight)) - influence * bonus +
+                    pair_bonus_shift_ * (arc.to - current.position);
+                bigramHit = bonus > 0;
+            }
+            else if (surface) {
                 if (inModel) {
                     stepCost = std::max(0.0, -surface_score.log_probability - model_input_penalty(data, *language_model_));
                     nextGState = surface_score.next_state;
@@ -803,7 +833,7 @@ bool coral::phonetics::CandidateDecoder::find_best_paths(
 
             // 外部条件只在首次有效模型转移时折减；本次组串内部的二元评分不变。
             // 未入模型的中文仍沿用既有状态，因此边界标记也保留到真正消费条件时。
-            if (current.condition_pending && inModel) {
+            if (!pair_bonus && current.condition_pending && inModel) {
                 double ordinary_cost;
                 if (surface) {
                     coral::language_model::PhraseScore initial;
@@ -813,7 +843,7 @@ bool coral::phonetics::CandidateDecoder::find_best_paths(
                 stepCost = condition_weight(ordinary_cost, stepCost);
             }
 			SearchNode next;
-            next.condition_pending = !surface && current.condition_pending && !inModel && !english;
+            next.condition_pending = !pair_bonus && !surface && current.condition_pending && !inModel && !english;
 			next.hasEnglish = current.hasEnglish || english;
 			next.cost = current.cost + stepCost;
 			next.position = arc.to;
@@ -1014,6 +1044,13 @@ bool coral::phonetics::CandidateDecoder::get_parsed_res(
                         direct_weight = condition_weight(ordinary.log_probability, conditional.log_probability) +
                             model_input_penalty(data, *language_model_);
                     }
+                }
+                if (const auto* bonus = language_model_->pair_bonus_model()) {
+                    const auto external = language_model_->pair_bonus_state(condition_id_);
+                    const auto previous = external ? external : bonus->word_state("<s>");
+                    direct_weight = data.weight + (external ? condition_influence_ : 1.0) * bonus->bonus(previous,
+                        data.pinyin_sequence().is_match_english_vocab_ || data.english_context_only ?
+                            0 : bonus->word_state(data.phrase));
                 }
             }
 			directs.push_back(DirectRef{ arcIndex, data.phrase, pinyinLength,

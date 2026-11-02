@@ -10,6 +10,7 @@ from verify_engine_linkage import imported_libraries
 from product_identity import load_identity
 from surface_model_format import HEADER,TOKEN,ARC,PHRASE
 from compact_tables import pack_tables
+from build_pair_bonus import inspect_pairs
 
 IDENTITY=load_identity()
 OWNED=tuple(IDENTITY[key] for key in ('settings_exe','update_exe','diagnostic_exe','service_exe','session_host_exe','renderer_exe','tsf_x64_dll'))
@@ -68,10 +69,19 @@ def package_character_model(runtime,provenance,required=False):
     if actual!=expected:raise ValueError('Character model differs from build provenance')
     return actual
 
-def precompiled_tables_info(directory):
-    # 显式模型绑定词库ID；安装端必须原样使用，不能再从旧CSV重建。
-    directory=require_files(directory,('mainlexicon.coral','languagemodel.coral'))
-    model=directory/'languagemodel.coral'
+def precompiled_tables_info(directory, model_path=None):
+    # 两种独立格式均原样部署；词面增益不绑定主词库编号或摘要。
+    directory=require_files(directory,('mainlexicon.coral',) + (() if model_path is not None else ('languagemodel.coral',)))
+    model=Path(model_path) if model_path is not None else directory/'languagemodel.coral'
+    with model.open('rb') as stream:
+        magic = stream.read(8)
+    if magic == b'CBGN0001':
+        if model.stat().st_size > 512 * 1024 * 1024:
+            raise ValueError('Pair bonus file exceeds limit')
+        info = inspect_pairs(model.read_bytes())
+        info['files'] = {name:{'sha256':digest(path),'size':path.stat().st_size}
+                         for name,path in [('mainlexicon.coral',directory/'mainlexicon.coral'),('languagemodel.coral',model)]}
+        return info
     with model.open('rb') as stream:
         raw=stream.read(HEADER.size)
         if len(raw)!=HEADER.size:raise ValueError('Truncated precompiled surface model')
@@ -86,8 +96,8 @@ def precompiled_tables_info(directory):
         raise ValueError('Precompiled model is bound to a different dictionary')
     if h[11]!=body.digest():raise ValueError('Precompiled model body checksum mismatch')
     return {'format':'CSLM0001','dictionary_entries_binding':'sha256','states':h[4],'explicit_arcs':h[5],
-        'files':{name:{'sha256':digest(directory/name),'size':(directory/name).stat().st_size}
-                 for name in ('mainlexicon.coral','languagemodel.coral')}}
+        'files':{name:{'sha256':digest(path),'size':path.stat().st_size}
+                 for name,path in [('mainlexicon.coral',directory/'mainlexicon.coral'),('languagemodel.coral',model)]}}
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
@@ -97,7 +107,7 @@ def main():
     parser.add_argument('--makensis',type=Path,help='Optional explicit compiler; omitted means staging only')
     parser.add_argument('--sign-mode',choices=['None','LocalTest','Store','Artifact'],default='None')
     parser.add_argument('--require-character-model',action='store_true',help='Reject packages missing recorded CCHLM001 weights')
-    parser.add_argument('--precompiled-tables-dir',type=Path,help='Explicit paired mainlexicon.coral and CSLM0001 model; deploy without CSV rebuilding')
+    parser.add_argument('--precompiled-tables-dir',type=Path,help='Explicit mainlexicon.coral and CBGN0001/CSLM0001 model; deploy without legacy CSV rebuilding')
     parser.add_argument('--precompiled-tables-storage',choices=['compact','direct'],default='compact',help='Compact lossless installer reconstruction (default), or direct tables for diagnostics')
     parser.add_argument('--compact-tables-bundle',type=Path,help='Reuse an explicit CSTPACK1 bundle; native restoration and exact pairing are still verified')
     parser.add_argument('--demo',action='store_true',help='Mark the demo installer; launch manually from the Start menu')
@@ -229,6 +239,7 @@ def main():
             'edition':'demo' if args.demo else 'standard',
             'character_model':character_info,
             'precompiled_tables':tables_info,
+            'pair_bonus_source':provenance.get('pair_bonus_source'),
             'manual_launch':args.demo or args.manual_launch,
             'runtime':{key:provenance.get(key) for key in ('data_version','engine_version','model_mode','installer_bins_match')},
             'runtime_manifest_sha256':digest(runtime/'runtime-manifest.json'),'x86_tsf_sha256':digest(args.x86_tsf),

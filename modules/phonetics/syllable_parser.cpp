@@ -163,8 +163,8 @@ bool coral::phonetics::SyllableParser::get_pinyin_sequence(PinyinParseContext& c
 		fuzzy_only_syllables_,
 		fuzzyMaps,
 		shouldLimit,
-        // 概率模型下，完整词条不能作为组合路径的得分上界。
-        language_model_.surface_model() == nullptr
+        // 概率模型及词对奖励下，完整词条不能作为其他组合路径的得分上界。
+        language_model_.surface_model() == nullptr && language_model_.pair_bonus_model() == nullptr
 	);
 }
 
