@@ -35,6 +35,8 @@ if(TARGET coraltsf64)
         set_property(TARGET tsf_edit_boundaries_test PROPERTY ${_property} "${_value}")
     endforeach()
     target_precompile_headers(tsf_edit_boundaries_test PRIVATE ${_tsf_source}/pch.h)
+    # 预编译头引用 MIDL 生成文件，干净并行构建须先完成生成目标。
+    add_dependencies(tsf_edit_boundaries_test coraltsf64)
     coral_target_common(tsf_edit_boundaries_test)
     add_test(NAME tsf_edit_boundaries COMMAND tsf_edit_boundaries_test)
     set_tests_properties(tsf_edit_boundaries PROPERTIES TIMEOUT 30)
@@ -45,6 +47,7 @@ if(TARGET coraltsf64)
         set_property(TARGET config_snapshot_test PROPERTY ${_property} "${_value}")
     endforeach()
     target_precompile_headers(config_snapshot_test PRIVATE ${_tsf_source}/pch.h)
+    add_dependencies(config_snapshot_test coraltsf64)
     coral_target_common(config_snapshot_test)
     add_test(NAME config_snapshot COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_SOURCE_DIR}/tools/checks/run_isolated.py

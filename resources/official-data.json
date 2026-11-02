@@ -1,16 +1,33 @@
 {
-  "format_version": 1,
-  "repository": "Coral-IME/Coral-IME-data",
-  "revision": "931cfead9455085c6cd2efe7c62417ac44e168c6",
-  "data_version": "official-20261025.1",
-  "archive": "official-inputs.zip",
-  "archive_sha256": "28c7d2b65de7525b53b91003859693f7a52002c8506e1adfdc41ca0799d9dc52",
-  "manifest_sha256": "fad2d0754f8db8f4832daf45d7b15c0e5584fb9c00037f4dc5802b16844d9f95",
-  "model_mode": "explicit-reuse",
+  "format_version": 2,
+  "data_version": "official-20261102.1",
+  "model_mode": "independent-word-pair-bonus",
   "character_model": {
     "path": "models/character_model.coral",
     "size": 4430160,
     "sha256": "b202ab7a3fe603bad2ad4d46e85dc978e8234844b6809c288f276a4ff9ae7bab",
     "precision": "int8"
-  }
+  },
+  "precompiled_tables": {
+    "format": "CBGN0001",
+    "dictionary_entries_binding": "word-surface",
+    "states": 138319,
+    "explicit_arcs": 1182578,
+    "max_bonus": 3.0,
+    "files": {
+      "mainlexicon.coral": {
+        "sha256": "3fda30625309948792bc1b280f63240ee0cbc016bdff4bca1c7726075ee436b2",
+        "size": 173828604
+      },
+      "languagemodel.coral": {
+        "sha256": "fd263cc9fea95339382b166eff6040bfc2a6fb9b8c9ad18cf6cd3f8137c711f5",
+        "size": 16280361
+      }
+    }
+  },
+  "repository": "Coral-IME/Coral-IME-data",
+  "revision": "56b436ed1409974ca4c73b0bb7259ae7362271c6",
+  "archive": "official-inputs.zip",
+  "archive_sha256": "b9bc680f7d47ffd98b1f624bbd4dc0990cccc9cb43128e658bae3875ee661559",
+  "manifest_sha256": "6b6bc1f72fcffcb3d0673aaede4bb4ce656a24363c57873454a584b16772e556"
 }

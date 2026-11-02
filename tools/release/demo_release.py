@@ -51,6 +51,14 @@ def bundle(package_dir, output_dir, version, source_sha, repository, run_url,
             raise ValueError('Official release requires locked data and formal-data test results')
         from official_data import load_lock
         lock = load_lock(data_lock)
+        if lock['model_mode'] == 'independent-word-pair-bonus':
+            tables = manifest.get('precompiled_tables') or {}
+            if (tables.get('files') != lock['precompiled_tables']['files']
+                    or tables.get('format') != lock['precompiled_tables']['format']
+                    or tables.get('storage') != 'compact'
+                    or tables.get('installer_restoration_verified') is not True
+                    or tables.get('native_load_verified') is not True):
+                raise ValueError('Optimized package must preserve the locked tables and verify native restoration')
         if lock.get('character_model'):
             expected = {key: lock['character_model'][key] for key in ('size', 'sha256')}
             if manifest.get('character_model') != expected:
@@ -132,6 +140,11 @@ def bundle(package_dir, output_dir, version, source_sha, repository, run_url,
 '''
         if automatic_updates:
             notes = notes.replace('自动更新在编译时关闭', '官网 HTTPS 更新检查已启用，可在关于页关闭')
+        if lock['model_mode'] == 'independent-word-pair-bonus':
+            notes = notes.replace('两个既有正式模型明确复用，未重新训练；数据继续按各自原有许可管理。',
+                                  '更新主词库和独立词对增益模型，保留拼音纠错资源；数据继续按各自原有许可管理。')
+            notes = notes.replace('使用本次源码生成资源，已核对安装时还原的词库和语言模型与构建结果一致。',
+                                  '原样收集锁定的预编译词库与 CBGN0001 词对模型，安装端无损还原并逐文件核对摘要。')
         if lock.get('character_model'):
             model = lock['character_model']
             notes += f"本包随附本地 GPT-2 字符模型：{model['precision']}，{model['size']:,} 字节，SHA-256 `{model['sha256']}`。长候选在输入停顿后参与重排，模型推理在本机完成。\n\n"

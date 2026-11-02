@@ -76,6 +76,8 @@ python tools/checks/run_all.py --build-dir build/win-x64-release --configuration
 
 ## 打包与诊断
 
+Official 工作流支持 `official-data.json` 格式 2 的 `independent-word-pair-bonus` 数据。私有数据包仅收集白名单内的预编译运行资源、主词典 CSV、独立 `pair-bonuses.tsv` 和已有 INT8 文件，不收集本机配置、旧概率模型源或审计材料。`official_data.py pack --model-mode independent-word-pair-bonus` 核对词对源与 CBGN0001 二进制一致；锁定提交、清单及每个文件摘要后，`stage-optimized` 使用源码内公开配置原样部署。安装包使用紧凑格式并由当前源码编译的原生还原器逐字节验证，不经过旧 CSV 模型重建。格式 1 的历史发行继续兼容。
+
 先生成配套运行包，再编译 x86 Release 的 `coraltsf32`。文件收集不再自动编译、训练、下载 NSIS 或创建签名证书：
 
 ```powershell

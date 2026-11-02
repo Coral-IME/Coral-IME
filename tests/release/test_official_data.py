@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/release'))
 import official_data as DATA
@@ -207,6 +208,79 @@ class OfficialDataTest(unittest.TestCase):
         info = json.loads((self.root / 'release/BUILD_INFO.json').read_text(encoding='utf-8'))
         self.assertTrue(info['automatic_updates'])
         self.assertEqual(info['character_model'], self.lock['character_model'])
+
+    def prepare_optimized(self):
+        from test_compact_tables import fixture as table_fixture
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'language_model'))
+        from test_character_model import fixture as character_fixture
+        from character_model_format import quantize_model
+        from build_pair_bonus import compile_source
+        # 新格式只收集明确允许的运行资源，不携带本机配置和历史概率源。
+        for name in DATA.OPTIMIZED_REQUIRED:
+            path = self.root / 'optimized-inputs' / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(('self-authored fixture: ' + name).encode())
+        self.inputs = self.root / 'optimized-inputs'
+        (self.inputs / 'source/pair-bonuses.tsv').write_text('prev_word\tnext_word\tbonus\n甲\t乙\t1.25\n', encoding='utf-8')
+        general = self.inputs / 'runtime/data/generallexicon'
+        (general / 'mainlexicon.coral').write_bytes(table_fixture()[0])
+        (general / 'languagemodel.coral').write_bytes(compile_source(self.inputs / 'source/pair-bonuses.tsv'))
+        character = self.root / 'character.coral'
+        character.write_bytes(character_fixture())
+        (self.inputs / DATA.CHARACTER_MODEL).unlink()
+        quantize_model(character, self.inputs / DATA.CHARACTER_MODEL)
+        DATA.pack(self.inputs, self.repository, 'optimized-v1', DATA.PAIR_MODE)
+        manifest = json.loads((self.repository / 'inputs-manifest.json').read_text(encoding='utf-8'))
+        self.lock = {key: value for key, value in manifest.items() if key != 'files'}
+        self.lock.update(repository='example/private-data', revision='b' * 40, archive='official-inputs.zip',
+                         archive_sha256=DATA.digest(self.repository / 'official-inputs.zip'),
+                         manifest_sha256=DATA.digest(self.repository / 'inputs-manifest.json'))
+        self.write_lock()
+
+    def test_optimized_inputs_stage_exact_tables_and_public_configuration(self):
+        self.prepare_optimized()
+        DATA.unpack(self.repository, self.lock_path, self.output)
+        config = self.root / 'config'
+        (config / 'doublepinyin').mkdir(parents=True)
+        (config / 'coralpinyinConfig.ini').write_text('[app]\nVersion=0.0.0.0\n[settingsconfig]\nsmartCandidates=true\n', encoding='utf-8')
+        runtime = self.root / 'runtime'
+        with patch('subprocess.run') as native:
+            DATA.stage_optimized(self.output, self.lock_path, runtime, config, 'a' * 40, '1.0.0.6', Path(sys.executable))
+            native.assert_called_once()
+        for name in self.lock['precompiled_tables']['files']:
+            self.assertEqual((runtime / 'data/generallexicon' / name).read_bytes(),
+                             (self.inputs / 'runtime/data/generallexicon' / name).read_bytes())
+        record = json.loads((runtime / 'build-record.json').read_text())
+        self.assertEqual(record['engine_version'], 'a' * 40)
+        self.assertEqual(record['model_mode'], DATA.PAIR_MODE)
+
+    def test_optimized_tampered_dictionary_source_blocks_staging(self):
+        self.prepare_optimized()
+        DATA.unpack(self.repository, self.lock_path, self.output)
+        (self.output / 'source/coral_lexicon.csv').write_bytes(b'changed after extraction')
+        with self.assertRaisesRegex(ValueError, 'Selected input differs'):
+            DATA.stage_optimized(self.output, self.lock_path, self.root / 'runtime', self.root / 'config',
+                                 'a' * 40, '1.0.0.6', Path(sys.executable))
+        self.assertFalse((self.root / 'runtime').exists())
+
+    def test_optimized_release_requires_exact_native_restoration(self):
+        self.prepare_release()
+        self.lock.update(format_version=2, model_mode=DATA.PAIR_MODE,
+                         precompiled_tables={'format': 'CBGN0001', 'files': {
+                             name: {'size': 128, 'sha256': 'e' * 64}
+                             for name in ('mainlexicon.coral', 'languagemodel.coral')}})
+        self.write_lock()
+        self.manifest['runtime']['model_mode'] = DATA.PAIR_MODE
+        tables = dict(self.lock['precompiled_tables'], storage='compact',
+                      native_load_verified=True, installer_restoration_verified=True)
+        self.manifest['precompiled_tables'] = tables
+        tables['installer_restoration_verified'] = False
+        self.write_release()
+        with self.assertRaisesRegex(ValueError, 'verify native restoration'):
+            self.bundle()
+        tables['installer_restoration_verified'] = True
+        self.write_release()
+        self.bundle()
 
 
 if __name__ == '__main__':
