@@ -30,7 +30,8 @@
       "inherits": "base",
       "architecture": "x64",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
+        "CMAKE_BUILD_TYPE": "Release",
+        "CORAL_CHARACTER_RERANK_PATHS": "8"
       }
     },
     {
@@ -48,7 +49,8 @@
       "inherits": "base",
       "architecture": "Win32",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
+        "CMAKE_BUILD_TYPE": "Release",
+        "CORAL_CHARACTER_RERANK_PATHS": "8"
       }
     }
   ],
