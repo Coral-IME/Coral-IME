@@ -19,9 +19,9 @@ cmake --build build/neural-on --config Release -- /m:1 /nr:false
 cmake --build build/neural-off --config Release -- /m:1 /nr:false
 ```
 
-候选字数门槛通过编译参数 `CORAL_CHARACTER_RERANK_THRESHOLD=N` 调节，默认 `3`，合法范围 `0–63`。只有原始最佳完整候选的 Unicode 字符数 **大于 N** 才进入重排，所以默认三字及以下整组跳过，四字起参与；不按 UTF-8 字节数或拼音字母数计数。进入重排后也只给超过 N 字的候选评分与加分，较短候选保留基础分数；满足门槛的候选不足两条时跳过模型。这样短首选不会因为存在长备选而触发推理。较短候选的分数保持不变，但长候选加分后仍可能改变整组排序。
+候选字数门槛通过编译参数 `CORAL_CHARACTER_RERANK_THRESHOLD=N` 调节，默认 `2`，合法范围 `0–63`。只有原始最佳完整候选的 Unicode 字符数 **大于 N** 才进入重排，所以默认两字及以下整组跳过，三字起参与；不按 UTF-8 字节数或拼音字母数计数。进入重排后也只给超过 N 字的候选评分与加分，较短候选保留基础分数；满足门槛的候选不足两条时跳过模型。这样短首选不会因为存在长备选而触发推理。较短候选的分数保持不变，但长候选加分后仍可能改变整组排序。
 
-例如：`cmake -S . -B build/neural-on -DCORAL_CHARACTER_RERANK_THRESHOLD=3`。参数在编译时固定，调整后需要重新构建；设为 `0` 允许所有非空长度参与，`CORAL_ENABLE_CHARACTER_MODEL=OFF` 仍会完全排除引擎的神经重排功能。字数判断之前不会进行神经推理；模型资源仅在启动时“智能候选”开启的情况下加载。
+例如：`cmake -S . -B build/neural-on -DCORAL_CHARACTER_RERANK_THRESHOLD=2`。参数在编译时固定，调整后需要重新构建；设为 `0` 允许所有非空长度参与，`CORAL_ENABLE_CHARACTER_MODEL=OFF` 仍会完全排除引擎的神经重排功能。字数判断之前不会进行神经推理；模型资源仅在启动时“智能候选”开启的情况下加载。
 
 开启版自动查找语言模型同目录下的 `character_model.coral`，通常是运行资源中的 `data/generallexicon/character_model.coral`。不会从第三方安装目录提取文件。生成安装包时向 build_runtime.py 传入 --character-model PATH，默认将浮点矩阵转换为逐输出行 INT8 后放入运行包，并分别记录源文件与产物摘要；输入已为 INT8 时直接复制。使用 --character-model-format preserve 可保留原文件精度。package_windows.py 自动收集已记录的模型，可用 --require-character-model 强制要求模型存在。未传模型参数的通用构建仍不包含权重。也可以在启动前指定绝对模型路径和权重：
 

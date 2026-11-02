@@ -12,7 +12,8 @@
       "generator": "Visual Studio 16 2019",
       "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CORAL_CHARACTER_RERANK_THRESHOLD": "2"
       }
     },
     {

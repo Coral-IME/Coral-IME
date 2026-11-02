@@ -1,6 +1,6 @@
 ﻿# coral_engine_core：进程内静态词典核心
 
-set(CORAL_CHARACTER_RERANK_THRESHOLD "3" CACHE STRING "Skip neural reranking for candidates with at most N Unicode characters")
+set(CORAL_CHARACTER_RERANK_THRESHOLD "2" CACHE STRING "Skip neural reranking for candidates with at most N Unicode characters")
 set(CORAL_CHARACTER_RERANK_PATHS "8" CACHE STRING "Maximum structural paths scored by the character model")
 if(NOT CORAL_CHARACTER_RERANK_PATHS MATCHES "^([1-9]|[12][0-9]|3[0-2])$")
     message(FATAL_ERROR "CORAL_CHARACTER_RERANK_PATHS must be an integer from 1 to 32")

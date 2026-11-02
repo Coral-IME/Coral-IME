@@ -318,7 +318,7 @@ int main(int argc, char** argv) {
         if (first != "在在在在") { std::cerr << "Dictionary hit entered neural or composed ranking"; return 16; }
         decode(alternatives,2,kInvalidPhraseId,1.f,model,&first);
         if (first != (CORAL_CHARACTER_RERANK_THRESHOLD < 2 ? "再在" : "在在")) return 11;
-        // 默认 N=3 时分别验证两字、三字跳过和四字重排；同时覆盖自定义 N 的相邻边界。
+        // 默认 N=2 时分别验证两字跳过、三字和四字重排；同时覆盖自定义 N 的相邻边界。
         const std::vector<int> lengths{2,3,4,CORAL_CHARACTER_RERANK_THRESHOLD,
             CORAL_CHARACTER_RERANK_THRESHOLD + 1};
         for (int length : lengths) {
