@@ -1,6 +1,7 @@
 #pragma once
 
 #include "coral/composition/presentation_gateway.h"
+#include "coral/composition/candidate_capacity.h"
 #include "candidate_theme.h"
 #include "soft_canvas.h"
 
@@ -57,25 +58,25 @@ struct CandidateSkin
 
 	float borderWidth = 1.0f;
 	int panelRadius = 10;
-	int paddingX = 4;
+	int paddingX = composition::CandidateRowMetrics::kPaddingX;
 	int paddingY = 4;
 	int rowHeight = 32;
 	int itemInsetY = 2;
 	int itemRadius = 7;
-	int itemPaddingX = 8;
+	int itemPaddingX = composition::CandidateRowMetrics::kItemPaddingX;
 	int itemGap = 2;
-	int indexGap = 5;
+	int indexGap = composition::CandidateRowMetrics::kIndexGap;
 	int indexFontSize = 12;
 	// 面板宽度固定；行是至少 minItemWidth 宽的列网格，
 	// 候选词条按其文本需要占用若干列。折叠行
 	// 在能显示更多词语时，可使用最多 collapsedMaxColumns 列的更细网格。
-	int panelWidth = 530;
+	int panelWidth = composition::CandidateRowMetrics::kPanelWidth;
 	int minItemWidth = 72;
 	int maxColumns = 6;
-	int collapsedMaxColumns = 9;
-	int toggleSize = 26;
+	int collapsedMaxColumns = composition::CandidateRowMetrics::kCollapsedMaxColumns;
+	int toggleSize = composition::CandidateRowMetrics::kToggleSize;
 	int toggleRadius = 6;
-	int toggleGap = 4;
+	int toggleGap = composition::CandidateRowMetrics::kToggleGap;
 	int chevronSize = 14;
 	float chevronStroke = 1.7f;
 	int scrollbarWidth = 4;

@@ -6,6 +6,7 @@
 #include "support/parse_metrics.hpp"
 #include "syllable_helpers.h"
 #include "coral/language_model/character_rerank.h"
+#include "coral/composition/candidate_capacity.h"
 
 #include <algorithm>
 #include <cmath>
@@ -973,9 +974,10 @@ bool coral::phonetics::CandidateDecoder::get_parsed_res(
 	}
 
 	// 直连弧都是词库真实命中（完整词或从输入开头命中的前缀词），需要按原规则保留；
-	// 多弧路径保留原来的最佳组句，并额外保留最佳混输组句。否则中文组句评分更高时，
-	// 已经匹配到的完整英文区间会在这里消失。两者仍按相同规则排序和去重。
-	sents.reserve(picked.size() + std::min<size_t>(pathSolutions.size(), 2));
+	// 模型拼句按未展开窗口的容量取前若干条，短句可多取，词库命中仍全部保留。
+	// 最佳混输沿用优先保留规则，但同样必须占用这一行的容量。
+	sents.reserve(picked.size() + std::min<size_t>(pathSolutions.size(),
+        coral::composition::CandidateRowMetrics::kCollapsedMaxColumns));
 	{
 		auto dedup = coral::phonetics::support::make_indexed_string_set(picked.size() + pathSolutions.size(),
 			[&sents](const int32_t index) -> std::string_view { return sents[index].sentence; });
@@ -1000,6 +1002,25 @@ bool coral::phonetics::CandidateDecoder::get_parsed_res(
 			sents.push_back(std::move(solution));
 			dedup.commit(probe, static_cast<int32_t>(sents.size()) - 1);
 		}
+        coral::composition::ComposedCandidateCapacity composed_capacity;
+        const CandidateResult* first_composed = nullptr;
+        for (const auto& path : pathSolutions) {
+            if (!path.sentence.empty() && path.probability != kLogInfiniteSimal &&
+                dedup.probe(path.sentence).existing == Dedup::kNotFound) {
+                first_composed = &path;
+                composed_capacity.try_append(path.sentence);
+                break;
+            }
+        }
+        bool reserved_mixed = false;
+        if (first_composed && !best_mixed_sentence.empty() && first_composed->sentence != best_mixed_sentence &&
+            dedup.probe(best_mixed_sentence).existing == Dedup::kNotFound) {
+            auto with_mixed = composed_capacity;
+            if (with_mixed.try_append(best_mixed_sentence)) {
+                composed_capacity = with_mixed;
+                reserved_mixed = true;
+            }
+        }
 		bool appendedBestComposed = false;
 		for (auto& solution : pathSolutions)
 		{
@@ -1008,7 +1029,8 @@ bool coral::phonetics::CandidateDecoder::get_parsed_res(
 			const auto probe = dedup.probe(solution.sentence);
 			if (probe.existing == Dedup::kNotFound)
 			{
-				if (appendedBestComposed && solution.sentence != best_mixed_sentence)
+				if (&solution != first_composed && !(reserved_mixed && solution.sentence == best_mixed_sentence) &&
+                    !composed_capacity.try_append(solution.sentence))
 					continue;
 				solution.is_additional_mixed = appendedBestComposed;
 				sents.push_back(std::move(solution));

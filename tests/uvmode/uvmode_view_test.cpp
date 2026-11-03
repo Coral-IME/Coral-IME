@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <cstring>
 
 static bool Save(coral::win32::CandidateView& view, const std::filesystem::path& path) {
     BITMAPINFO info{};
@@ -92,6 +93,67 @@ int main(int argc, char** argv) {
     snapshot.listLayout = false;
     snapshot.hasMore = false;
     snapshot.selection = 0;
+    snapshot.expanded = false;
+    // 同时核对引擎数量和真实字体排版，短词必须占满初始行且完整显示。
+    for (const char* font : {"Microsoft YaHei UI", "Microsoft YaHei", "SimSun", "DengXian"}) {
+        snapshot.fontName = font;
+        for (int font_size : {12, 16, 24, 28}) {
+            snapshot.fontSize = font_size;
+            snapshot.letterSelection = true;
+            for (const auto [length, expected] : {std::pair{2,7}, {3,6}, {4,5}, {8,3}, {12,2}, {13,2}, {14,1}, {28,1}}) {
+                const std::wstring word(length, L'\x4f60');
+                const auto text = Utf8(word);
+                ComposedCandidateCapacity capacity;
+                snapshot.candidates.clear();
+                while (capacity.try_append(text))
+                    snapshot.candidates.push_back({snapshot.candidates.size() + 1, text, ""});
+                CHECK(snapshot.candidates.size() == static_cast<size_t>(expected));
+                view.update(window, snapshot);
+                CHECK(view.rowCount() == 1 && view.visibleRows() == 1);
+                HDC dc = ::GetDC(window);
+                const UINT dpi = ::GetDpiForWindow(window);
+                const std::wstring font_name(font, font + std::strlen(font));
+                const auto scale = [&](int value) { return ::MulDiv(::MulDiv(value, dpi, 96), font_size, 16); };
+                HFONT word_font = ::CreateFontW(-::MulDiv(font_size, dpi, 96), 0, 0, 0, FW_NORMAL,
+                    FALSE, FALSE, FALSE, DEFAULT_CHARSET, 0, 0, 0, 0, font_name.c_str());
+                const auto old_font = ::SelectObject(dc, word_font);
+                SIZE word_size{}, index_size{};
+                CHECK(::GetTextExtentPoint32W(dc, word.c_str(), length, &word_size));
+                HFONT index_font = ::CreateFontW(-scale(12), 0, 0, 0, FW_NORMAL,
+                    FALSE, FALSE, FALSE, DEFAULT_CHARSET, 0, 0, 0, 0, font_name.c_str());
+                ::SelectObject(dc, index_font);
+                CHECK(::GetTextExtentPoint32W(dc, L"W", 1, &index_size));
+                int cell_width = scale(CandidateRowMetrics::kPanelWidth) - scale(CandidateRowMetrics::kPaddingX) * 2 -
+                    scale(CandidateRowMetrics::kToggleGap) - scale(CandidateRowMetrics::kToggleSize);
+                const auto& centers = view.itemCenters();
+                for (size_t i = 1; i < centers.size(); ++i)
+                    cell_width = (std::min)(cell_width, static_cast<int>(centers[i] - centers[i - 1]));
+                CHECK(word_size.cx + scale(8) * 2 + scale(5) + index_size.cx <= cell_width);
+                ::SelectObject(dc, old_font);
+                ::DeleteObject(word_font);
+                ::DeleteObject(index_font);
+                ::ReleaseDC(window, dc);
+            }
+        }
+    }
+    snapshot.fontName = "Microsoft YaHei UI";
+    snapshot.fontSize = 16;
+    snapshot.letterSelection = false;
+    const std::vector<std::vector<std::string>> examples{
+        {u8"输入法",u8"候选词",u8"新功能",u8"看电影",u8"去公园",u8"吃晚饭"},
+        {u8"今天下雨",u8"明天晴天",u8"一起出发",u8"测试候选",u8"完整显示"},
+        {u8"今天下午我们一起去公园吧",u8"明天上午我们一起去图书馆"}};
+    for (size_t example = 0; example < examples.size(); ++example) {
+        snapshot.candidates.clear();
+        for (const auto& word : examples[example])
+            snapshot.candidates.push_back({snapshot.candidates.size() + 1, word, ""});
+        view.update(window, snapshot);
+        CHECK(view.rowCount() == 1 && view.visibleRows() == 1);
+        CHECK(Save(view, std::filesystem::path(argv[1]) / ("capacity-" + std::to_string(example) + ".bmp")));
+    }
+    snapshot.candidates.insert(snapshot.candidates.begin(), {99, Utf8(std::wstring(60, L'\x8bcd')), ""});
+    view.update(window, snapshot);
+    CHECK(view.rowCount() == 2 && view.rowStarts()[1] == 1 && view.itemCenters().size() == 3);
     snapshot.candidates.clear();
     snapshot.expanded = false;
     snapshot.hint = Utf8(specialModeHint(SpecialMode::Symbols, L"uu", false));

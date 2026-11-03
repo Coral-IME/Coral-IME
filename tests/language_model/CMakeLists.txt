@@ -12,6 +12,19 @@ add_test(NAME character_model COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/test_character_model.py $<TARGET_FILE:coral_character_probe>)
 set_tests_properties(character_model PROPERTIES TIMEOUT 60)
 if(TARGET coral_engine_core)
+    add_executable(composed_capacity_test composed_capacity_test.cpp)
+    target_link_libraries(composed_capacity_test PRIVATE coral_engine_core)
+    target_include_directories(composed_capacity_test PRIVATE
+        ../../src/common ../../src/lib ../../src/lib/marisa-trie/include
+        ../../modules/foundation ../../modules/preferences ../../modules/phonetics/script
+        ../../src/lib/opencc/deps/rapidjson-1.1.0)
+    target_compile_definitions(composed_capacity_test PRIVATE OS_WINDOW Opencc_BUILT_AS_STATIC)
+    coral_target_common(composed_capacity_test)
+    add_test(NAME composed_capacity COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/tools/checks/run_isolated.py
+        --user-root "${CMAKE_BINARY_DIR}/test-users/composed_capacity"
+        -- $<TARGET_FILE:composed_capacity_test>)
+    set_tests_properties(composed_capacity PROPERTIES TIMEOUT 30)
     add_test(NAME pair_bonus_packaging COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_SOURCE_DIR}/tests/release/test_pair_bonus_packaging.py)
     set_tests_properties(pair_bonus_packaging PROPERTIES TIMEOUT 60)

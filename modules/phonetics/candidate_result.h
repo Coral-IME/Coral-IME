@@ -54,7 +54,7 @@ public:
 	coral::phonetics::PersonalLexiconIndex index{ -1 };
 	int is_fixed_candidate{ 0 };
 	bool is_corrected{ false };
-	// 附加的混合句子可被选中，但不得改变纠错门控。
+	// 附加组句（包括混输）可被选中，但不得改变原首选的纠错门控。
 	bool is_additional_mixed{ false };
 };
 } // 命名空间 coral::phonetics 结束（批次 3）

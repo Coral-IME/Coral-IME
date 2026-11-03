@@ -3,6 +3,8 @@
   "project_license": "MPL-2.0",
   "license_documents": ["LICENSE", "LICENSING.md", "THIRD_PARTY_NOTICES.md"],
   "project_paths": [
+    "include/coral/composition/candidate_capacity.h",
+    "tests/language_model/composed_capacity_test.cpp",
     "tools/data/compact_tables.py",
     "tools/native/table_restore/CMakeLists.txt",
     "tools/native/table_restore/main.cpp",

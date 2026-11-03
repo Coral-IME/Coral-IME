@@ -378,11 +378,11 @@ void CandidateView::update(HWND window, const composition::CandidateRenderSnapsh
 	slots.reserve(count);
 	for (std::size_t start = 0, row = 0; start < count; ++row)
 	{
-		// 折叠行只显示单行，因此每行在展开网格与 collapsedMaxColumns 之间
-		// 选择能容纳最多词语的那个网格。
+		// 折叠行遍历全部列数以容纳最多词语，例如四字词用五列即可填满一行。
+		// 展开模式继续使用原有网格；窗口宽度始终固定。
 		int grid = list ? 1 : columns;
 		std::size_t end = list ? start + 1 : rowEnd(start, grid);
-		for (int candidate = columns + 1; !list && !snapshot.expanded && candidate <= collapsedColumns;
+		for (int candidate = 1; !list && !snapshot.expanded && candidate <= collapsedColumns;
 			++candidate)
 		{
 			const std::size_t candidateEnd = rowEnd(start, candidate);
