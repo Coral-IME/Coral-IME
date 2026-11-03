@@ -80,7 +80,6 @@ set(CORAL_PHONETICS_SOURCES
     syllable_lattice.cpp
     syllable_lattice.h
     candidate_decoder.h
-    prefix_stability.h
     candidate_decoder.cpp
     shortest_paths.hpp
     phonetic_types.h

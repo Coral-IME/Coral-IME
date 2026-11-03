@@ -175,9 +175,8 @@ public:
     SessionResult record_selection(SessionToken token, std::uint64_t request_id, const std::string& pinyin,
         const std::string& word, std::uint32_t condition_id) override
     {
-        return invoke(token, request_id, valid_text(pinyin) && valid_text(word), [&](SessionState& state, SessionResult& result) {
+        return invoke(token, request_id, valid_text(pinyin) && valid_text(word), [&](SessionState&, SessionResult& result) {
             invalidate_refinements();
-            state.session.reset_candidate_history();
             coral::runtime::remember_candidate(pinyin, word, condition_id); result.value = condition_id;
         });
     }
@@ -198,8 +197,7 @@ public:
     }
     SessionResult clear_cache(SessionToken token, std::uint64_t request_id) override
     {
-        return invoke(token, request_id, true, [&](SessionState& state, SessionResult&) {
-            state.session.reset_candidate_history();
+        return invoke(token, request_id, true, [&](SessionState&, SessionResult&) {
             invalidate_refinements(); coral::runtime::clear_parse_cache();
         });
     }
@@ -220,7 +218,6 @@ public:
                 result.message = "stale session settings revision"; return;
             }
             state.settings = settings;
-            state.session.reset_candidate_history();
             state.refinement.reset();
             if (state.settings->fuzzy_choices.empty()) state.settings->fuzzy_choices.assign(FUZZY_CHOICES, 0);
         }, false);

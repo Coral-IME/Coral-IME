@@ -20,8 +20,6 @@ void require(bool value, const char* message)
 class Source final : public coral::text_service::CandidateProvider {
 public:
     int remembered = 0;
-    int composition_resets = 0;
-    HRESULT reset(coral::composition::SessionToken) override { ++composition_resets; return S_OK; }
     bool prediction_test = false;
     std::string last_condition;
     HRESULT query(const coral::text_service::CandidateLookup& lookup,
@@ -130,12 +128,7 @@ void check_async(const coral::translation::Credentials* live_credentials)
     CString text;
     require(controller.selectCurrentCandidate(text) == 1 && !text.IsEmpty() && controller.takeVerbatimCommit(), "Async result cannot commit");
     require(source->remembered == 0 && sink.history.empty(), "Async translation entered pinyin learning");
-    const auto resets_before_caret = source->composition_resets;
-    controller.moveCursorHome(); controller.moveCursorEnd();
-    require(source->composition_resets == resets_before_caret + 2, "Caret navigation must clear engine prefix history");
-    const auto resets_before = source->composition_resets;
     controller.Reset();
-    require(source->composition_resets == resets_before + 1, "Composition reset must clear engine prefix history");
 }
 
 void check_prediction()

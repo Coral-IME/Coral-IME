@@ -125,38 +125,6 @@ int main(int argc, char** argv) {
         std::string first;
         decode({{0,1,12,-.1f},{0,1,13,-2.f}},1,12,1.f,model,&first);
         if (first != "甲") return 10;
-        {
-            // 原前缀稳定机制必须叠加在新奖励路径上，七字内不罚，强证据仍可翻转。
-            PrefixStability history, independent;
-            history.prepare("", "aaaa", 0);
-            history.observe("乙丁甲乙", "a'a'a'a");
-            const auto& anchors = history.prepare("", "aaaaa", 0);
-            if (anchors.size() != 2 || !independent.prepare("", "aaaaaa", 0).empty()) return 12;
-            const auto edges = [](int length, float gap) {
-                std::vector<Edge> result{{0,1,12,-1.f},{0,1,13,-1.f-gap}};
-                for (int i=1;i<length;++i) {
-                    const uint32_t id = i == 1 ? 99 : i == 2 ? 12 : i == 3 ? 13 : 99;
-                    result.push_back({i,i+1,id,-1.f});
-                }
-                return result;
-            };
-            {
-                PrefixStabilityScope scope(anchors);
-                decode(edges(7,.7f),7,kInvalidPhraseId,1.f,model,&first);
-                if (first != "甲丁甲乙丁丁丁") return 13;
-                decode(edges(8,.7f),8,kInvalidPhraseId,1.f,model,&first);
-                if (first != "乙丁甲乙丁丁丁丁") return 14;
-                decode(edges(8,1.f),8,kInvalidPhraseId,1.f,model,&first);
-                if (first != "甲丁甲乙丁丁丁丁") return 18;
-                decode(edges(8,4.f),8,kInvalidPhraseId,1.f,model,&first);
-                if (first != "甲丁甲乙丁丁丁丁") return 15;
-            }
-            // 没有该会话的历史时，同一新模型仍选择基础证据更强的首词。
-            decode(edges(8,.7f),8,kInvalidPhraseId,1.f,model,&first);
-            if (first != "甲丁甲乙丁丁丁丁") return 16;
-            history.reset();
-            if (!history.prepare("", "aaaaaa", 0).empty()) return 17;
-        }
         std::cout << "180 exhaustive DAG checks, empty-table replay, dictionary replacement and reload checks passed\n";
         return 0;
     } catch (const std::exception& failure) { std::cerr << failure.what(); return 1; }

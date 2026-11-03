@@ -32,7 +32,7 @@ bool coral::phonetics::SyllableLattice::make_graph(const string_view pinyinStrin
 	vertices_.resize(vertexCount);
 	for(size_t i = 0; i < vertexCount; ++i)
 		vertices_[i].id = (int)i;
-    // 原始字节位置在缩图后仍用于连续输入锚点，不能用 compact_id 代替。
+    // 原始字节位置在缩图后仍需保留，末尾奖励按输入覆盖区间核对，不能用 compact_id 代替。
     size_t input_vertex = 0;
     for (size_t i = 0; i < pinyinString.size(); ++i)
         if (pinyinString[i] != '\'') vertices_[input_vertex++].data.input_offset = static_cast<int>(i);

@@ -237,7 +237,6 @@ private:
     int cached_special_mode_ = -1;
 	coral::phonetics::ContextScorer language_model_;
 	std::string cached_condition_;
-    std::vector<PrefixAnchor> cached_prefix_anchors_;
     bool smart_candidates_ = true;
 	vector<coral::phonetics::CandidateResult> sents_cache_;
 	// Solution 里 sentence/pinyin/pinyinview 三个容器的堆缓冲，每轮解析都重新分配、
