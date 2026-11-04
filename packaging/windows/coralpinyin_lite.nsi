@@ -823,6 +823,12 @@ Function CopyDataFiles
   ; 显式选择的字符神经模型由运行包清单校验后收集。
   File "${PACKAGE_DIR}\data\generallexicon\character_model.coral"
 !endif
+!ifdef CORAL_PACKAGE_CANDIDATE_RANKER
+  ; 同目录配套排序器由引擎自动加载；安装无排序器的包时清除旧文件。
+  File "${PACKAGE_DIR}\data\generallexicon\candidate_ranker.coral"
+!else
+  Delete "$OUTDIR\candidate_ranker.coral"
+!endif
 !ifdef CORAL_PACKAGE_COMPACT_TABLES
   ; 无损还原已绑定的词库和模型；任一校验或发布失败必须停止安装。
   File "${PACKAGE_DIR}\data\generallexicon\surface_tables.cstpack.xz"

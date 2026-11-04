@@ -4,7 +4,7 @@
 
 ## 启用与回退
 
-默认关闭。启用字符模型和智能候选后，可在启动引擎前设置 `CORAL_CANDIDATE_RANKER`，值为导出的 `candidate_ranker.coral` 绝对路径。当前实现要求字符模型成功加载；短输入、智能候选关闭、字符推理失败时保留原排序。未设置变量、资源不存在、格式损坏或特征版本不兼容时也保留原排序，并在加载日志中记录原因。替换字符模型后应重新训练、验证排序器。
+启用智能候选并成功加载字符模型后，引擎自动查找字符模型同目录的 `candidate_ranker.coral`。不携带排序器的资源包保持原融合。开发时可在启动前用 `CORAL_CANDIDATE_RANKER` 指定其他绝对路径，显式路径无效时回到原融合，不再尝试目录默认文件。短输入、智能候选关闭、字符推理失败、资源损坏或特征版本不兼容时保留原排序，并在加载失败日志中记录原因。替换字符模型后应重新训练、验证排序器。
 
 排序范围沿用 `CORAL_CHARACTER_RERANK_PATHS`，字符数门槛沿用 `CORAL_CHARACTER_RERANK_THRESHOLD`。搜索预算、全串词库命中分支和界面候选容量不由此模块修改。排序只在相同拼音覆盖长度的候选间置换原有分数槽，原始概率保持原值；这样可继续与直选、混输等来源比较。树分相同时保留原次序。
 
@@ -32,6 +32,10 @@ python tools/data/candidate_ranker_format.py output_directory/model.json candida
 验收允许用户选择二选时，同时报告首选命中率（Top1）与前二候选命中率（Top2）。Top2 按实际原生候选列表的第 1、2 项任一与目标全文相等统计，包含候选合并和容量规则的结果；API 失败、未召回输入仍计入完整分母。记录仅第二项补中的数量，以及相对基线的前二修复和损失。Top2 的提升不能写成首选准确率提升，内部搜索窗口覆盖率也不能作为实际前二命中率。
 
 ## 二进制格式与校验
+
+打包时用 `prepare_optimized_runtime.py check --candidate-ranker ... --ranking-profile ...` 冻结排序模型和配套资源。配置文件格式为1，记录 `candidate_ranker_sha256`、`character_model_sha256`、`dictionary_sha256`、`pair_bonus_sha256`，以及 `character_weight`、`search_paths`、`neural_paths`、`rerank_threshold`。当前正常启动的字符权重为0.5、搜索预算32；后两项必须与本轮 CMake 参数一致。预检后修改任一配套输入会使收集失败。
+
+`stage` 使用 `--ranker-probe` 进行原生加载验证，并将模型信息写入运行包来源记录。`package_windows.py --require-candidate-ranker` 检查模型存在、摘要与记录一致、字符功能已编译以及评分门槛与配置一致；NSIS 将模型原样部署到字符模型旁边，安装不含排序器的包时移除旧排序器文件。最终安装包清单分别记录字符和排序模型，避免只打入字符模型却误认为学习排序已生效。
 
 所有整数为小端；浮点为 IEEE 754 binary64。80 字节头依次为：magic `CRNK0001`、u32 格式版本 1、u32 头长 80、u64 文件总长、u32 特征数 32、u32 特征版本 1、u32 树数、u32 节点数、32 字节载荷 SHA-256、u32 flags 0、u32 reserved 0。载荷先保存每棵树的 u32 起始节点和 u32 节点数，再保存各节点。
 

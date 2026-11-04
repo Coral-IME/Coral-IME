@@ -19,6 +19,45 @@ FEATURE_NAMES = [
 HEADER = struct.Struct('<8sIIQIIII32sII')
 NODE = struct.Struct('<iiiIdd')
 
+def inspect_model(path):
+    path = Path(path)
+    if not HEADER.size <= path.stat().st_size <= 2 * 1024 * 1024:
+        raise ValueError('Invalid candidate ranker size')
+    data = path.read_bytes()
+    magic, version, header, size, features, schema, trees, count, checksum, flags, reserved = HEADER.unpack_from(data)
+    if (magic != b'CRNK0001' or version != 1 or header != HEADER.size or size != len(data)
+            or features != len(FEATURE_NAMES) or schema != FEATURE_VERSION or flags or reserved):
+        raise ValueError('Incompatible candidate ranker header')
+    if not 0 < trees <= 512 or not 0 < count <= 65536 or header + trees * 8 + count * NODE.size != size:
+        raise ValueError('Invalid candidate ranker sections')
+    if hashlib.sha256(data[header:]).digest() != checksum:
+        raise ValueError('Candidate ranker checksum mismatch')
+    nodes = list(NODE.iter_unpack(data[header + trees * 8:]))
+    for feature, left, right, options, threshold, value in nodes:
+        if not -1 <= feature < features or options > 3 or not math.isfinite(threshold) or not math.isfinite(value):
+            raise ValueError('Invalid candidate ranker node')
+        if feature == -1:
+            if (left, right, options, threshold) != (-1, -1, 0, 0):raise ValueError('Invalid candidate ranker leaf')
+        elif value != 0:raise ValueError('Invalid candidate ranker split value')
+    next_node = 0
+    for index in range(trees):
+        start, length = struct.unpack_from('<II', data, header + index * 8)
+        if start != next_node or not length or start + length > count:
+            raise ValueError('Invalid candidate ranker tree bounds')
+        seen = set(); pending = [(0, 0)]
+        while pending:
+            node, depth = pending.pop()
+            if not 0 <= node < length or node in seen or depth > 64:
+                raise ValueError('Invalid candidate ranker tree graph')
+            seen.add(node)
+            feature, left, right, *_ = nodes[start + node]
+            if feature != -1:pending.extend([(left, depth + 1), (right, depth + 1)])
+        if len(seen) != length:raise ValueError('Unreachable candidate ranker nodes')
+        next_node += length
+    if next_node != count:raise ValueError('Unreferenced candidate ranker nodes')
+    return dict(format='CRNK0001', feature_version=schema, features=features, trees=trees,
+                nodes=count, size=size, sha256=hashlib.sha256(data).hexdigest())
+
 def export_model(model, path):
     if model.get('num_class', 1) != 1 or model.get('num_tree_per_iteration', 1) != 1 or model.get('average_output', False):
         raise ValueError('Only single-output additive ranking trees are supported')

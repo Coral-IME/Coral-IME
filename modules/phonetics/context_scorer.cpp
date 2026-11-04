@@ -129,9 +129,11 @@ void coral::phonetics::ContextScorer::configure_character_model(const std::files
 #else
     const char* ranker_path = std::getenv("CORAL_CANDIDATE_RANKER");
 #endif
-    // 首轮只允许显式选择实验模型，普通运行不因目录里多一个文件改变排序。
-    if (ranker_path && *ranker_path) {
-        if (!load_candidate_ranker(std::filesystem::path(ranker_path), error))
+    // 配套模型随运行资源部署；开发时可显式覆盖路径，无效资源沿用原融合。
+    const auto ranking_path = ranker_path && *ranker_path ? std::filesystem::path(ranker_path) :
+        model_path.parent_path() / "candidate_ranker.coral";
+    if ((ranker_path && *ranker_path) || std::filesystem::exists(ranking_path, ec)) {
+        if (!load_candidate_ranker(ranking_path, error))
             LOG_ERROR("Candidate ranker rejected: " + error);
         else LOG_INFO("Candidate LambdaRank model enabled, feature_version=1");
     }

@@ -4,7 +4,7 @@ import argparse,configparser,hashlib,json,os,re,shutil,struct,subprocess,sys,tim
 sys.dont_write_bytecode=True
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'data'))
 from paths import CODE_ROOT,digest,output_path,require_files
-from runtime_manifest import inventory,verify,verify_runtime,character_model_info
+from runtime_manifest import inventory,verify,verify_runtime,character_model_info,candidate_ranker_info
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'checks'))
 from verify_engine_linkage import imported_libraries
 from product_identity import load_identity
@@ -69,6 +69,31 @@ def package_character_model(runtime,provenance,required=False):
     if actual!=expected:raise ValueError('Character model differs from build provenance')
     return actual
 
+def package_candidate_ranker(runtime, provenance, required=False):
+    path=Path(runtime)/'data/generallexicon/candidate_ranker.coral'
+    expected=provenance.get('candidate_ranker')
+    if not path.exists() and expected is None and not required:return None
+    if not path.is_file() or not expected:
+        raise ValueError('Required candidate ranker is missing or has no build provenance')
+    actual=candidate_ranker_info(path)
+    if actual!=expected:raise ValueError('Candidate ranker differs from build provenance')
+    if not provenance.get('character_model'):raise ValueError('Candidate ranker requires a character model')
+    return actual
+
+def verify_ranking_build(build, provenance):
+    values={}
+    for line in (Path(build)/'CMakeCache.txt').read_text(encoding='utf-8').splitlines():
+        if '=' in line and ':' in line.split('=',1)[0]:
+            key,value=line.split('=',1);values[key.split(':',1)[0]]=value
+    if values.get('CORAL_ENABLE_CHARACTER_MODEL','').upper() not in ('ON','TRUE','1'):
+        raise ValueError('Candidate ranker requires a build with character models enabled')
+    profile=provenance.get('ranking_profile')
+    if profile:
+        parameters=profile['parameters']
+        for key,expected in [('CORAL_CHARACTER_RERANK_PATHS',parameters['neural_paths']),
+                             ('CORAL_CHARACTER_RERANK_THRESHOLD',parameters['rerank_threshold'])]:
+            if values.get(key)!=str(expected):raise ValueError('Ranking build parameter mismatch: '+key)
+
 def precompiled_tables_info(directory, model_path=None):
     # 两种独立格式均原样部署；词面增益不绑定主词库编号或摘要。
     directory=require_files(directory,('mainlexicon.coral',) + (() if model_path is not None else ('languagemodel.coral',)))
@@ -107,6 +132,7 @@ def main():
     parser.add_argument('--makensis',type=Path,help='Optional explicit compiler; omitted means staging only')
     parser.add_argument('--sign-mode',choices=['None','LocalTest','Store','Artifact'],default='None')
     parser.add_argument('--require-character-model',action='store_true',help='Reject packages missing recorded CCHLM001 weights')
+    parser.add_argument('--require-candidate-ranker',action='store_true',help='Reject packages missing the recorded CRNK0001 ranker')
     parser.add_argument('--precompiled-tables-dir',type=Path,help='Explicit mainlexicon.coral and CBGN0001/CSLM0001 model; deploy without legacy CSV rebuilding')
     parser.add_argument('--precompiled-tables-storage',choices=['compact','direct'],default='compact',help='Compact lossless installer reconstruction (default), or direct tables for diagnostics')
     parser.add_argument('--compact-tables-bundle',type=Path,help='Reuse an explicit CSTPACK1 bundle; native restoration and exact pairing are still verified')
@@ -149,6 +175,8 @@ def main():
             if {'langengine.dll','coral_engine_core.dll'}.intersection(imported_libraries(binaries/name)):
                 raise ValueError('Binary still depends on a removed engine DLL: '+name)
         character_info=package_character_model(runtime,provenance,args.require_character_model)
+        ranker_info=package_candidate_ranker(runtime,provenance,args.require_candidate_ranker)
+        if ranker_info:verify_ranking_build(args.build_dir,provenance)
         if args.makensis and not args.makensis.is_file():raise ValueError('NSIS compiler missing')
         root=output_path(args.output_dir,[args.build_dir,runtime,args.x86_tsf]+([args.precompiled_tables_dir] if tables_info else [])+
             ([args.compact_tables_bundle] if args.compact_tables_bundle else []),directory=True)
@@ -173,6 +201,10 @@ def main():
             shutil.copyfile(runtime/'data/generallexicon/character_model.coral',general/'character_model.coral')
             if character_model_info(general/'character_model.coral')!=character_info:
                 raise ValueError('Character model changed during package collection')
+        if ranker_info:
+            shutil.copyfile(runtime/'data/generallexicon/candidate_ranker.coral',general/'candidate_ranker.coral')
+            if candidate_ranker_info(general/'candidate_ranker.coral')!=ranker_info:
+                raise ValueError('Candidate ranker changed during package collection')
         if tables_info:
             tables_info['storage']=args.precompiled_tables_storage
             if args.precompiled_tables_storage=='compact':
@@ -227,6 +259,7 @@ def main():
             command=[str(args.makensis.resolve()),'/NOCD','/INPUTCHARSET','UTF8','-DARCH=x64','-DDBG=0','-DPRODUCT_VERSION='+args.version,
                 '-DPACKAGE_DIR='+str(package),'-DOUTPUT_FILE='+str(installer)]
             if character_info:command+=['-DCORAL_PACKAGE_CHARACTER_MODEL=1']
+            if ranker_info:command+=['-DCORAL_PACKAGE_CANDIDATE_RANKER=1']
             if tables_info:command+=['-DCORAL_PACKAGE_PRECOMPILED_TABLES=1']
             if tables_info and args.precompiled_tables_storage=='compact':command+=['-DCORAL_PACKAGE_COMPACT_TABLES=1']
             if args.demo:command+=['-DCORAL_DEMO_PACKAGE=1']
@@ -238,6 +271,7 @@ def main():
         record={'format_version':1,'complete':True,'version':args.version,'sign_mode':args.sign_mode,'installer_compiled':bool(installer),
             'edition':'demo' if args.demo else 'standard',
             'character_model':character_info,
+            'candidate_ranker':ranker_info,'ranking_profile':provenance.get('ranking_profile'),
             'precompiled_tables':tables_info,
             'pair_bonus_source':provenance.get('pair_bonus_source'),
             'manual_launch':args.demo or args.manual_launch,

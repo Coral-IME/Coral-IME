@@ -6,6 +6,7 @@ import configparser
 import hashlib
 import struct
 from character_model_format import inspect_model
+from candidate_ranker_format import inspect_model as candidate_ranker_info
 from paths import digest
 
 ENGINE_FILES={'BushouTrie':'data/bushou.marisa','BushouData':'data/bushou.dat','StrokeTrie':'data/stroke.marisa','StrokeData':'data/stroke.dat',

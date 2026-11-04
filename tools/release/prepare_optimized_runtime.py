@@ -1,5 +1,6 @@
 """编译独立词对源并冻结打包输入；保留既有预编译模型兼容入口。"""
 import argparse
+import configparser
 import datetime
 import hashlib
 import json
@@ -59,6 +60,18 @@ def resource_inventory(source):
                 result[path.relative_to(source).as_posix()] = info(path)
     return result
 
+def validate_ranking_profile(profile, tables, character, ranker):
+    expected = {'candidate_ranker_sha256': ranker['sha256'],
+                'character_model_sha256': character['sha256'],
+                'dictionary_sha256': tables['files']['mainlexicon.coral']['sha256'],
+                'pair_bonus_sha256': tables['files']['languagemodel.coral']['sha256']}
+    if profile.get('format_version') != 1 or any(profile.get(k) != v for k, v in expected.items()):
+        raise ValueError('Ranking profile does not match selected models and dictionary')
+    if (profile.get('character_weight') != .5 or profile.get('search_paths') != 32
+            or not isinstance(profile.get('neural_paths'), int) or not 2 <= profile['neural_paths'] <= 32
+            or not isinstance(profile.get('rerank_threshold'), int) or not 0 <= profile['rerank_threshold'] <= 64):
+        raise ValueError('Unsupported ranking profile parameters')
+
 
 def check(args, project):
     runtime_manifest, packaging, character_format = load_tools(project)
@@ -100,7 +113,30 @@ def check(args, project):
     else:
         tables = packaging.precompiled_tables_info(source / 'data/generallexicon')
     character_info = runtime_manifest.character_model_info(character)
+    ranker = getattr(args, 'candidate_ranker', None)
+    profile_path = getattr(args, 'ranking_profile', None)
+    ranker_record = profile_record = None
+    if profile_path and not ranker:
+        raise ValueError('Ranking profile requires a candidate ranker')
+    if ranker:
+        ranker = ranker.resolve(strict=True)
+        if any(ranker == path or ranker.is_relative_to(path) for path in outputs):
+            raise ValueError('Candidate ranker must be outside cleaned outputs')
+        ranker_record = runtime_manifest.candidate_ranker_info(ranker)
+        if profile_path:
+            profile_path = profile_path.resolve(strict=True)
+            if any(profile_path == path or profile_path.is_relative_to(path) for path in outputs):
+                raise ValueError('Ranking profile must be outside cleaned outputs')
+            profile = json.loads(profile_path.read_text(encoding='utf-8'))
+            validate_ranking_profile(profile, tables, character_info, ranker_record)
+            profile_record = {'path': str(profile_path), **info(profile_path), 'parameters': profile}
+            config = configparser.ConfigParser(interpolation=None)
+            config.read(source / 'config/coralpinyinConfig.ini', encoding='utf-8-sig')
+            if not config.getboolean('settingsconfig', 'smartCandidates', fallback=False):
+                raise ValueError('Ranking profile requires smart candidates enabled in the package defaults')
     files = resource_inventory(source)
+    if not ranker and 'data/generallexicon/candidate_ranker.coral' in files:
+        raise ValueError('Source contains an unselected candidate ranker; select it explicitly')
     # 词库与模型自身的绑定是权威；固定目录更新后无需手改旧清单的哈希。
     for name in ('mainlexicon.coral', 'languagemodel.coral'):
         if name != 'languagemodel.coral' or compiled_model is None:
@@ -113,6 +149,8 @@ def check(args, project):
         'compiled_model': str(compiled_model) if compiled_model else None,
         'character_model_source': str(character), 'character_model_info': character_info,
         'character_model_precision': character_format.inspect_model(character)[0],
+        'candidate_ranker_source': str(ranker) if ranker else None,
+        'candidate_ranker': ranker_record, 'ranking_profile': profile_record,
         'data_version': 'active-' + tables['files']['mainlexicon.coral']['sha256'][:12] + '-' +
                         tables['files']['languagemodel.coral']['sha256'][:12],
         'checked_at': datetime.datetime.now().astimezone().isoformat(),
@@ -142,6 +180,12 @@ def stage(args, project):
         raise ValueError('Inputs changed since preflight; run package.bat again')
     pair_source = selection.get('pair_bonus_source')
     compiled_model = Path(selection['compiled_model']) if selection.get('compiled_model') else None
+    ranker = Path(selection['candidate_ranker_source']) if selection.get('candidate_ranker_source') else None
+    if ranker and runtime_manifest.candidate_ranker_info(ranker) != selection['candidate_ranker']:
+        raise ValueError('Candidate ranker changed since preflight')
+    profile = selection.get('ranking_profile')
+    if profile and info(Path(profile['path'])) != {key: profile[key] for key in ('size', 'sha256')}:
+        raise ValueError('Ranking profile changed since preflight')
     if pair_source and info(Path(pair_source['path'])) != {k:pair_source[k] for k in ('size','sha256')}:
         raise ValueError('Pair source changed since preflight; run package.bat again')
     if compiled_model and info(compiled_model) != selection['tables']['files']['languagemodel.coral']:
@@ -167,12 +211,27 @@ def stage(args, project):
     else:
         shutil.copyfile(character, character_target)
     character_info = runtime_manifest.character_model_info(character_target)
+    ranker_info = None
+    ranker_target = output / 'data/generallexicon/candidate_ranker.coral'
+    if ranker:
+        shutil.copyfile(ranker, ranker_target)
+        ranker_info = runtime_manifest.candidate_ranker_info(ranker_target)
+        if ranker_info != selection['candidate_ranker']:
+            raise ValueError('Candidate ranker changed during copying')
+    elif ranker_target.exists():
+        raise ValueError('Source contains an unselected candidate ranker')
     tables = packaging.precompiled_tables_info(output / 'data/generallexicon')
     if tables != selection['tables']:
         raise ValueError('Staged tables differ from selected tables')
+    if profile:
+        validate_ranking_profile(profile['parameters'], tables, character_info, ranker_info)
     probe = args.native_probe.resolve(strict=True)
     subprocess.run([str(probe), str(output / 'data/generallexicon/languagemodel.coral'),
                     str(output / 'data/generallexicon/mainlexicon.coral')], input=b'', check=True)
+    if ranker:
+        ranker_probe = getattr(args, 'ranker_probe', None)
+        if not ranker_probe:raise ValueError('Candidate ranker requires a native ranker probe')
+        subprocess.run([str(ranker_probe.resolve(strict=True)), str(ranker_target)], input=b'', check=True)
     runtime_manifest.write_runtime(output, selection['version'])
     runtime_manifest.verify_runtime(output)
     record = {
@@ -183,6 +242,7 @@ def stage(args, project):
         'deployment_mode': 'lossless-compact-installer-restoration',
         'native_load_verified': True, 'native_probe_sha256': digest(probe),
         'tables': tables, 'character_model': character_info,
+        'candidate_ranker': ranker_info, 'ranking_profile': profile,
         'pair_bonus_source': pair_source,
         'character_model_source': selection['character_model_info'],
         'source_runtime': str(source), 'selection_sha256': digest(args.selection_file),
@@ -210,6 +270,14 @@ def verify_package(args, project):
         raise ValueError('Package version does not match selection')
     if package.get('pair_bonus_source') != selection.get('pair_bonus_source'):
         raise ValueError('Package pair source provenance differs from selection')
+    if package.get('candidate_ranker') != selection.get('candidate_ranker'):
+        raise ValueError('Package candidate ranker differs from selection')
+    if package.get('ranking_profile') != selection.get('ranking_profile'):
+        raise ValueError('Package ranking profile differs from selection')
+    if selection.get('candidate_ranker'):
+        expected = {key: selection['candidate_ranker'][key] for key in ('size', 'sha256')}
+        if package['files'].get('data/generallexicon/candidate_ranker.coral') != expected:
+            raise ValueError('Package is missing the selected candidate ranker payload')
     print('Package verified: optimized paired resources and exact compact restoration.')
 
 
@@ -237,6 +305,9 @@ def main():
     parser.add_argument('--project-root', type=Path, required=True)
     parser.add_argument('--source-runtime', type=Path)
     parser.add_argument('--character-model', type=Path)
+    parser.add_argument('--candidate-ranker', type=Path)
+    parser.add_argument('--ranking-profile', type=Path)
+    parser.add_argument('--ranker-probe', type=Path)
     parser.add_argument('--pair-bonus-source', type=Path, help='Compile editable prev_word/next_word/bonus TSV before freezing inputs')
     parser.add_argument('--version')
     parser.add_argument('--selection-file', type=Path)

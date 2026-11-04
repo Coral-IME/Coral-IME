@@ -46,6 +46,8 @@ python tools/data/generate_manifest.py --source-dir build/demo-runtime-tools --m
 
 GPT2 字符模型独立于上述两个纠错模型。需要携带时给 build_runtime.py 传入 --character-model PATH；该文件须为 CCHLM001 容器，会检查版本、长度及载荷 SHA-256，默认将矩阵转换为 INT8 后保存为 data/generallexicon/character_model.coral，并分别记录源文件和产物摘要。已有 INT8 输入直接复制；--character-model-format preserve 保留原精度。package_windows.py 会收集该文件并让安装器原样落盘；传入 --require-character-model 可防止漏带。默认不选择外部权重，也不绑定本机模型路径。
 
+配套 LambdaRank 排序器通过 `prepare_optimized_runtime.py check --candidate-ranker PATH --ranking-profile PATH` 选择，阶段收集时用 `--ranker-probe` 验证原生加载。配置绑定字典、词对、字符模型和排序器摘要，以及神经评分路数、字数门槛和默认权重；修改输入后必须重新预检。打包使用 `--require-candidate-ranker`，同时核对本次编译的字符模型开关、路数和门槛，安装器将排序器原样放在字符模型旁边，智能候选启用时自动加载。格式、参数与回退见[候选学习排序器](candidate_ranking.md)。
+
 可先生成源清单，再通过 `--source-manifest` 在构建前校验：
 
 ```powershell

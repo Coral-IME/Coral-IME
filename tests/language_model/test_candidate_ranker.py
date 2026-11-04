@@ -12,7 +12,7 @@ import unittest
 
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tools/data'))
-from candidate_ranker_format import FEATURE_NAMES,export_model
+from candidate_ranker_format import FEATURE_NAMES,export_model,inspect_model
 PROBE=sys.argv.pop(1)
 
 def fixture():
@@ -26,6 +26,7 @@ class CandidateRankerTests(unittest.TestCase):
     def test_numeric_and_corrupt_resources(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);path=root/'ranker.coral';export_model(fixture(),path);data=path.read_bytes()
+            self.assertEqual(inspect_model(path)['trees'],2)
             rows=[]
             for a,b in [(0,0),(.5,0),(.5000000001,0),(0,1),(math.nan,0),(0,math.nan),(math.inf,0)]:
                 rows.append(' '.join(map(str,[a,b]+[0]*30)))
@@ -43,6 +44,7 @@ class CandidateRankerTests(unittest.TestCase):
                 malformed.append(bytes(changed))
             for index,blob in enumerate(malformed):
                 bad=root/f'bad-{index}.coral';bad.write_bytes(blob)
+                with self.assertRaises(ValueError):inspect_model(bad)
                 rejected=subprocess.run([PROBE,str(bad)],capture_output=True,text=True)
                 self.assertNotEqual(rejected.returncode,0,index)
                 retained=subprocess.run([PROBE,str(path),str(bad)],input=payload,text=True,capture_output=True)
