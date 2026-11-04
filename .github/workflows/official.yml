@@ -6,7 +6,7 @@ on:
       version:
         description: '四段程序版本；生成含正式词库的未签名测试包'
         type: string
-        default: '1.0.0.6'
+        default: '1.0.0.14'
         required: true
       create_draft:
         description: '成功后创建测试版 Release 草稿'
@@ -24,7 +24,7 @@ on:
       release_description:
         description: '官网及客户端显示的简短更新说明'
         type: string
-        default: '更新主词库与词频，采用独立二元词对增益模型，优化候选排序与连续输入稳定性。'
+        default: '新增本地 LambdaRank 候选排序模型，优化整句首选与第二候选推荐，更新配套词库及智能候选参数。'
 
 permissions:
   contents: read
@@ -78,6 +78,7 @@ jobs:
           "version=$($lock.data_version)" >> $env:GITHUB_OUTPUT
           "mode=$($lock.model_mode)" >> $env:GITHUB_OUTPUT
           if (-not $lock.character_model -or $lock.character_model.precision -ne 'int8') { throw 'A pinned INT8 character model is required.' }
+          if (-not $lock.candidate_ranker -or -not $lock.ranking_profile) { throw 'A pinned candidate ranker and ranking profile are required.' }
       - name: Read private release inputs
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -98,6 +99,10 @@ jobs:
         with:
           name: windows-x86-tsf
           path: build/ci-x86/coralpinyin/Release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: windows-x64-release-cmake-cache
+          path: build/ci-x64
       - name: Install data build dependencies
         run: python -m pip install -r tools/data/requirements.txt
       - name: Build paired official runtime
@@ -119,10 +124,11 @@ jobs:
           --lock resources/official-data.json --output-dir build/official-runtime
           --config-dir resources/config --engine-version "$env:GITHUB_SHA" --version "$env:CORAL_CI_VERSION"
           --native-probe build/ci-x64/coralpinyin/Release/coral_lm_probe.exe
+          --ranker-probe build/ci-x64/coralpinyin/Release/coral_ranker_probe.exe
       - name: Check official input behavior
         run: >-
           python tools/release/check_official_runtime.py --binaries build/ci-x64/coralpinyin/Release
-          --runtime-dir build/official-runtime --output-dir build/official-checks --require-character-model
+          --runtime-dir build/official-runtime --output-dir build/official-checks --require-character-model --require-candidate-ranker
       - name: Find NSIS
         run: |
           $compiler = Get-Command makensis.exe -ErrorAction SilentlyContinue
@@ -135,7 +141,7 @@ jobs:
           python tools/release/package_windows.py --build-dir build/ci-x64
           --x86-tsf build/ci-x86/coralpinyin/Release/coraltsf32.dll
           --runtime-dir build/official-runtime --output-dir build/official-package
-          --version "$env:CORAL_CI_VERSION" --makensis "$env:CORAL_NSIS" --sign-mode None --manual-launch --require-character-model
+          --version "$env:CORAL_CI_VERSION" --makensis "$env:CORAL_NSIS" --sign-mode None --manual-launch --require-character-model --require-candidate-ranker
       - name: Compile lossless optimized installer
         if: steps.data.outputs.mode == 'independent-word-pair-bonus'
         run: >-
@@ -143,7 +149,7 @@ jobs:
           --x86-tsf build/ci-x86/coralpinyin/Release/coraltsf32.dll
           --runtime-dir build/official-runtime --output-dir build/official-package
           --precompiled-tables-dir build/official-runtime/data/generallexicon --precompiled-tables-storage compact
-          --version "$env:CORAL_CI_VERSION" --makensis "$env:CORAL_NSIS" --sign-mode None --manual-launch --require-character-model
+          --version "$env:CORAL_CI_VERSION" --makensis "$env:CORAL_NSIS" --sign-mode None --manual-launch --require-character-model --require-candidate-ranker
       - name: Record source and checksums
         run: >-
           python tools/release/demo_release.py bundle --edition official

@@ -58,3 +58,16 @@ class PublishWebsiteTests(unittest.TestCase):
     def test_redirect_does_not_forward_deployment_credentials(self):
         with self.assertRaisesRegex(ValueError, 'redirects'):
             NoRedirect().redirect_request(None, None, 302, '', {}, 'https://other.example/')
+
+    def test_replaced_ranker_blocks_website_publication(self):
+        ranker = {'path': 'models/candidate_ranker.coral', 'sha256': 'd' * 64, 'size': 256}
+        profile = {'parameters': {'neural_paths': 8, 'rerank_threshold': 2}}
+        self.info.update(data={'candidate_ranker': ranker, 'ranking_profile': profile},
+                         candidate_ranker=ranker, ranking_profile=profile)
+        self.package.update(candidate_ranker={k: v for k, v in ranker.items() if k != 'path'}, ranking_profile=profile)
+        self.write()
+        verified_release(self.root, '1.0.0.5')
+        self.package['candidate_ranker']['sha256'] = '0' * 64
+        self.write()
+        with self.assertRaisesRegex(ValueError, 'Candidate ranker differs'):
+            verified_release(self.root, '1.0.0.5')

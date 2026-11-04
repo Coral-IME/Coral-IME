@@ -63,6 +63,10 @@ def bundle(package_dir, output_dir, version, source_sha, repository, run_url,
             expected = {key: lock['character_model'][key] for key in ('size', 'sha256')}
             if manifest.get('character_model') != expected:
                 raise ValueError('Package character model differs from the locked release model')
+        if lock.get('candidate_ranker'):
+            expected = {k: v for k, v in lock['candidate_ranker'].items() if k != 'path'}
+            if manifest.get('candidate_ranker') != expected or manifest.get('ranking_profile') != lock['ranking_profile']:
+                raise ValueError('Package ranking models differ from the locked release models')
         runtime = manifest.get('runtime', {})
         if (runtime.get('engine_version') != source_sha
                 or runtime.get('data_version') != lock['data_version']
@@ -77,6 +81,10 @@ def bundle(package_dir, output_dir, version, source_sha, repository, run_url,
             if summary.get('character_model') != lock['character_model']:
                 raise ValueError('Formal-data character model differs from its lock')
         tests = summary.get('tests', [])
+        if lock.get('candidate_ranker'):
+            expected_tests.add('candidate_ranker_test')
+            if summary.get('candidate_ranker') != lock['candidate_ranker']:
+                raise ValueError('Formal-data candidate ranker differs from its lock')
         if (summary.get('format_version') != 1 or summary.get('passed') is not True
                 or not re.fullmatch(r'[0-9a-f]{64}', summary.get('runtime_manifest_sha256', ''))
                 or summary['runtime_manifest_sha256'] != manifest.get('runtime_manifest_sha256')
@@ -112,6 +120,9 @@ def bundle(package_dir, output_dir, version, source_sha, repository, run_url,
         record['formal_data_tests'] = summary
         if lock.get('character_model'):
             record['character_model'] = lock['character_model']
+        if lock.get('candidate_ranker'):
+            record['candidate_ranker'] = lock['candidate_ranker']
+            record['ranking_profile'] = lock['ranking_profile']
     (output_dir / 'BUILD_INFO.json').write_text(
         json.dumps(record, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     if edition == 'demo':
@@ -148,6 +159,9 @@ def bundle(package_dir, output_dir, version, source_sha, repository, run_url,
         if lock.get('character_model'):
             model = lock['character_model']
             notes += f"本包随附本地 GPT-2 字符模型：{model['precision']}，{model['size']:,} 字节，SHA-256 `{model['sha256']}`。长候选在输入停顿后参与重排，模型推理在本机完成。\n\n"
+        if lock.get('candidate_ranker'):
+            notes += '新增本地 LambdaRank 候选排序模型，结合词库、词对及字符模型评分优化整句排序，并允许展示多个组句候选。默认三字起，在前 8 条路径上重排；全部推理在本机完成。\n\n'
+            notes += '字符模型、候选排序模型及正式资源的六项自动检查均已通过。\n\n'
     notes += f'''程序版本：{version}
 对应源码：https://github.com/{repository}/commit/{source_sha}
 构建与测试记录：{run_url}

@@ -55,6 +55,7 @@ jobs:
           -DCMAKE_SYSTEM_VERSION=10.0 -DPython3_EXECUTABLE="$((Get-Command python).Source)"
           -DCORAL_APP_VERSION="$env:CORAL_CI_VERSION" -DCORAL_ENABLE_UPDATES="$env:CORAL_CI_UPDATES"
           -DBUILD_TESTING=ON -DCORAL_BUILD_DEMO_DATA=ON
+          -DCORAL_ENABLE_CHARACTER_MODEL=ON -DCORAL_CHARACTER_RERANK_PATHS=8 -DCORAL_CHARACTER_RERANK_THRESHOLD=2
       - name: Build
         env:
           CONFIGURATION: ${{ matrix.configuration }}
@@ -73,6 +74,14 @@ jobs:
           path: |
             build/ci-x64/coralpinyin/Release/*.exe
             build/ci-x64/coralpinyin/Release/*.dll
+          if-no-files-found: error
+          retention-days: 7
+      - name: Save Release build parameters
+        if: matrix.configuration == 'Release'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-x64-release-cmake-cache
+          path: build/ci-x64/CMakeCache.txt
           if-no-files-found: error
           retention-days: 7
       - name: Save test and configure logs

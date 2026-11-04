@@ -13,12 +13,15 @@ import zipfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'data'))
 from character_model_format import inspect_model
 from runtime_manifest import ENGINE_FILES
+from candidate_ranker_format import inspect_model as ranker_info
 
 
 SOURCE_FILES = ('coral_lexicon.csv', 'coral_languagemodel.csv', 'eng_lexicon.csv',
                 'pinyin_frequency.csv', 'umode_radical.csv', 'umode_stroke.csv', 'dw.coral')
 MODEL_FILES = ('char_lm.dat', 'correction_pinyin_model.dat')
 CHARACTER_MODEL = 'models/character_model.coral'
+CANDIDATE_RANKER = 'models/candidate_ranker.coral'
+RANKING_PROFILE = 'models/ranking-profile.json'
 REQUIRED = ({'source/' + name for name in SOURCE_FILES}
             | {'models/' + name for name in MODEL_FILES}
             | {'source/opencc/' + name for name in ('s2t.json', 'symbol_word.coral', 'emoji_word.coral')})
@@ -43,7 +46,7 @@ def safe_name(name, optimized=False):
     if (not name or '\\' in name or ':' in name or path.is_absolute()
             or path.as_posix() != name or any(part in ('.', '..') for part in path.parts)):
         raise ValueError('Invalid input archive path')
-    if name in (OPTIMIZED_REQUIRED if optimized else REQUIRED) or name == CHARACTER_MODEL:
+    if name in (OPTIMIZED_REQUIRED if optimized else REQUIRED) or name == CHARACTER_MODEL or (optimized and name in (CANDIDATE_RANKER, RANKING_PROFILE)):
         return
     prefix = ('runtime', 'data', 'opencc') if optimized else ('source', 'opencc')
     if (len(path.parts) == len(prefix) + 1 and path.parts[:-1] == prefix
@@ -83,7 +86,38 @@ def validate_manifest(manifest):
         for name, entry in manifest['precompiled_tables']['files'].items():
             if entry != files['runtime/data/generallexicon/' + name]:
                 raise ValueError('Precompiled tables differ from file inventory')
+    validate_ranking_records(manifest, files)
     return files
+
+
+def validate_ranking_records(record, files=None):
+    ranker, profile = record.get('candidate_ranker'), record.get('ranking_profile')
+    if ranker is None and profile is None:
+        if files and (CANDIDATE_RANKER in files or RANKING_PROFILE in files):
+            raise ValueError('Undeclared ranking inputs')
+        return
+    if (record.get('model_mode') != PAIR_MODE or not isinstance(ranker, dict)
+            or ranker.get('path') != CANDIDATE_RANKER or ranker.get('format') != 'CRNK0001'
+            or ranker.get('feature_version') != 1 or ranker.get('features') != 32
+            or not isinstance(profile, dict) or profile.get('path') != RANKING_PROFILE):
+        raise ValueError('Invalid ranking release records')
+    for name, entry in ((CANDIDATE_RANKER, ranker), (RANKING_PROFILE, profile)):
+        if (type(entry.get('size')) is not int or not 0 < entry['size'] <= 2 * 1024 * 1024
+                or not re.fullmatch(r'[0-9a-f]{64}', entry.get('sha256', ''))
+                or (files is not None and files.get(name) != {k: entry[k] for k in ('size', 'sha256')})):
+            raise ValueError('Ranking inputs differ from file inventory')
+    from prepare_optimized_runtime import validate_ranking_profile
+    validate_ranking_profile(profile.get('parameters', {}), record['precompiled_tables'],
+                             record['character_model'], ranker)
+
+
+def ranking_records(directory):
+    directory = Path(directory)
+    ranker = {'path': CANDIDATE_RANKER, **ranker_info(directory / CANDIDATE_RANKER)}
+    path = directory / RANKING_PROFILE
+    profile = {'path': RANKING_PROFILE, 'size': path.stat().st_size, 'sha256': digest(path),
+               'parameters': json.loads(path.read_text(encoding='utf-8'))}
+    return {'candidate_ranker': ranker, 'ranking_profile': profile}
 
 
 def validate_tables_record(record):
@@ -126,6 +160,7 @@ def load_lock(path):
         validate_character_record(lock['character_model'])
     if optimized:
         validate_tables_record(lock.get('precompiled_tables'))
+    validate_ranking_records(lock)
     return lock
 
 
@@ -154,6 +189,8 @@ def pack(input_dir, output_dir, data_version, model_mode='explicit-reuse'):
         manifest['precompiled_tables'] = precompiled_tables_info(directory)
         if compile_source(input_dir / 'source/pair-bonuses.tsv') != (directory / 'languagemodel.coral').read_bytes():
             raise ValueError('Pair source differs from the selected compiled model')
+    if (input_dir / CANDIDATE_RANKER).exists() or (input_dir / RANKING_PROFILE).exists():
+        manifest.update(ranking_records(input_dir))
     validate_manifest(manifest)
     output_dir.mkdir(parents=True, exist_ok=False)
     archive_path = output_dir / 'official-inputs.zip'
@@ -188,6 +225,8 @@ def unpack(repository_dir, lock_path, output_dir):
         raise ValueError('Character model differs from its lock')
     if manifest.get('model_mode') != lock['model_mode'] or manifest.get('precompiled_tables') != lock.get('precompiled_tables'):
         raise ValueError('Precompiled tables differ from their lock')
+    if any(manifest.get(k) != lock.get(k) for k in ('candidate_ranker', 'ranking_profile')):
+        raise ValueError('Ranking inputs differ from their lock')
     if output_dir.is_relative_to(repository_dir) or repository_dir.is_relative_to(output_dir):
         raise ValueError('Repository and output directories must not overlap')
     with zipfile.ZipFile(archive_path) as archive:
@@ -210,12 +249,14 @@ def unpack(repository_dir, lock_path, output_dir):
                 raise ValueError('Extracted input checksum mismatch')
     if manifest.get('character_model') and character_record(output_dir / CHARACTER_MODEL) != manifest['character_model']:
         raise ValueError('Extracted character model metadata mismatch')
+    if lock.get('candidate_ranker') and ranking_records(output_dir) != {k: lock[k] for k in ('candidate_ranker', 'ranking_profile')}:
+        raise ValueError('Extracted ranking model metadata mismatch')
     if lock['model_mode'] == PAIR_MODE:
         shutil.copyfile(manifest_path, output_dir / 'inputs-manifest.json')
     print('Official input checksums verified: ' + str(len(files)) + ' files, ' + lock['data_version'])
 
 
-def stage_optimized(input_dir, lock_path, output_dir, config_dir, engine_version, version, native_probe):
+def stage_optimized(input_dir, lock_path, output_dir, config_dir, engine_version, version, native_probe, ranker_probe=None):
     """原样部署锁定的预编译词库和独立词对；配置仅来自公开模板。"""
     import subprocess
     from runtime_manifest import inventory, write_runtime, verify_runtime
@@ -244,11 +285,25 @@ def stage_optimized(input_dir, lock_path, output_dir, config_dir, engine_version
         raise ValueError('Pair source differs from the selected compiled model')
     if character_record(input_dir / CHARACTER_MODEL) != lock['character_model']:
         raise ValueError('Character model differs from its lock')
+    ranking = {}
+    if lock.get('candidate_ranker'):
+        ranking = ranking_records(input_dir)
+        if ranking != {k: lock[k] for k in ('candidate_ranker', 'ranking_profile')} or not ranker_probe:
+            raise ValueError('Ranking inputs differ from lock or native ranker probe is missing')
+        import configparser
+        config = configparser.ConfigParser(interpolation=None)
+        config.read(Path(config_dir) / 'coralpinyinConfig.ini', encoding='utf-8-sig')
+        if not config.getboolean('settingsconfig', 'smartCandidates', fallback=False):
+            raise ValueError('Ranking release requires smart candidates enabled')
     output_dir.mkdir(parents=True, exist_ok=False)
     shutil.copytree(input_dir / 'runtime/data', output_dir / 'data')
     shutil.copytree(config_dir, output_dir / 'config')
     shutil.copytree(Path(config_dir) / 'doublepinyin', output_dir / 'data/doublepinyin')
     shutil.copyfile(input_dir / CHARACTER_MODEL, output_dir / 'data/generallexicon/character_model.coral')
+    if ranking:
+        shutil.copyfile(input_dir / CANDIDATE_RANKER, output_dir / 'data/generallexicon/candidate_ranker.coral')
+        subprocess.run([str(Path(ranker_probe).resolve()), str(output_dir / 'data/generallexicon/candidate_ranker.coral')],
+                       input=(' '.join(['0'] * 32) + '\n').encode(), check=True)
     general = output_dir / 'data/generallexicon'
     subprocess.run([str(Path(native_probe).resolve()), str(general / 'languagemodel.coral'),
                     str(general / 'mainlexicon.coral')], input=b'', check=True)
@@ -262,6 +317,9 @@ def stage_optimized(input_dir, lock_path, output_dir, config_dir, engine_version
                                     'size': (input_dir / 'source/pair-bonuses.tsv').stat().st_size},
               'dictionary_source': {'sha256': digest(input_dir / 'source/coral_lexicon.csv'),
                                     'size': (input_dir / 'source/coral_lexicon.csv').stat().st_size}}
+    if ranking:
+        record['candidate_ranker'] = {k: v for k, v in ranking['candidate_ranker'].items() if k != 'path'}
+        record['ranking_profile'] = ranking['ranking_profile']
     (output_dir / 'build-record.json').write_text(json.dumps(record, indent=2) + '\n', encoding='utf-8')
     runtime_manifest = {'format_version': 2, 'data_version': lock['data_version'], 'engine_version': engine_version,
                         'excluded_files': ['runtime-manifest.json'],
@@ -290,6 +348,7 @@ def main():
     stage.add_argument('--engine-version', required=True)
     stage.add_argument('--version', required=True)
     stage.add_argument('--native-probe', type=Path, required=True)
+    stage.add_argument('--ranker-probe', type=Path)
     args = parser.parse_args()
     try:
         if args.command == 'pack':
@@ -298,7 +357,7 @@ def main():
             unpack(args.repository_dir, args.lock, args.output_dir)
         else:
             stage_optimized(args.input_dir, args.lock, args.output_dir, args.config_dir,
-                            args.engine_version, args.version, args.native_probe)
+                            args.engine_version, args.version, args.native_probe, args.ranker_probe)
     except (ValueError, OSError, zipfile.BadZipFile) as error:
         parser.exit(1, str(error) + '\n')
 

@@ -35,6 +35,13 @@ def verified_release(directory, version):
             or not info.get('formal_data_tests', {}).get('passed')):
         raise ValueError('Expected the pinned INT8 model and passed formal-data checks')
     installer = directory / name
+    ranker = info.get('data', {}).get('candidate_ranker') if isinstance(info.get('data'), dict) else None
+    if ranker:
+        if (info.get('candidate_ranker') != ranker
+                or manifest.get('candidate_ranker') != {k: v for k, v in ranker.items() if k != 'path'}
+                or info.get('ranking_profile') != info['data'].get('ranking_profile')
+                or manifest.get('ranking_profile') != info.get('ranking_profile')):
+            raise ValueError('Candidate ranker differs from the locked release models')
     actual = digest(installer)
     if actual != info['installer'].get('sha256') or actual != manifest.get('installer_sha256'):
         raise ValueError('Installer checksum does not match its build records')

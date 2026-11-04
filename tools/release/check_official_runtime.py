@@ -17,6 +17,7 @@ def main():
     parser.add_argument('--runtime-dir', type=Path, required=True)
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--require-character-model', action='store_true')
+    parser.add_argument('--require-candidate-ranker', action='store_true')
     args = parser.parse_args()
     runtime = args.runtime_dir.resolve()
     binaries = args.binaries.resolve()
@@ -71,10 +72,27 @@ def main():
             passed = False
         results.append({'name': 'character_model_test', 'exit_code': result.returncode, 'passed': passed})
         print('character_model_test: ' + ('PASS' if passed else 'FAIL'), flush=True)
+    if args.require_candidate_ranker:
+        from official_data import CANDIDATE_RANKER, ranker_info
+        model = runtime / 'data/generallexicon/candidate_ranker.coral'
+        ranker_record = {'path': CANDIDATE_RANKER, **ranker_info(model)}
+        result = subprocess.run([str(binaries / 'coral_ranker_probe.exe'), str(model)],
+                                input=(' '.join(['0'] * 32) + '\n').encode(),
+                                capture_output=True, timeout=120, check=False)
+        (output / 'candidate_ranker_test.log').write_bytes(result.stdout + result.stderr)
+        try:
+            scores = [float(line) for line in result.stdout.decode('utf-8').splitlines()]
+            passed = result.returncode == 0 and len(scores) == 1 and math.isfinite(scores[0])
+        except (ValueError, UnicodeError):
+            passed = False
+        results.append({'name': 'candidate_ranker_test', 'exit_code': result.returncode, 'passed': passed})
+        print('candidate_ranker_test: ' + ('PASS' if passed else 'FAIL'), flush=True)
     summary = {'format_version': 1, 'passed': all(item['passed'] for item in results),
                'runtime_manifest_sha256': digest(runtime / 'runtime-manifest.json'), 'tests': results}
     if args.require_character_model:
         summary['character_model'] = model_record
+    if args.require_candidate_ranker:
+        summary['candidate_ranker'] = ranker_record
     (output / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8')
     return 0 if summary['passed'] else 1
 

@@ -263,6 +263,59 @@ class OfficialDataTest(unittest.TestCase):
                                  'a' * 40, '1.0.0.6', Path(sys.executable))
         self.assertFalse((self.root / 'runtime').exists())
 
+    def add_ranker(self):
+        from candidate_ranker_format import export_model, FEATURE_NAMES
+        model = dict(num_class=1, num_tree_per_iteration=1, objective='lambdarank', average_output=False,
+                     feature_names=FEATURE_NAMES, tree_info=[dict(tree_structure=dict(leaf_value=.25))])
+        export_model(model, self.inputs / DATA.CANDIDATE_RANKER)
+        manifest = json.loads((self.repository / 'inputs-manifest.json').read_text())
+        profile = dict(format_version=1, character_weight=.5, search_paths=32, neural_paths=8, rerank_threshold=2,
+                       candidate_ranker_sha256=DATA.digest(self.inputs / DATA.CANDIDATE_RANKER),
+                       character_model_sha256=manifest['character_model']['sha256'],
+                       dictionary_sha256=manifest['precompiled_tables']['files']['mainlexicon.coral']['sha256'],
+                       pair_bonus_sha256=manifest['precompiled_tables']['files']['languagemodel.coral']['sha256'])
+        (self.inputs / DATA.RANKING_PROFILE).write_text(json.dumps(profile), encoding='utf-8')
+        self.repository = self.root / 'ranked-repository'
+        DATA.pack(self.inputs, self.repository, 'ranked-v1', DATA.PAIR_MODE)
+        manifest = json.loads((self.repository / 'inputs-manifest.json').read_text())
+        self.lock = {key: value for key, value in manifest.items() if key != 'files'}
+        self.lock.update(repository='example/private-data', revision='b' * 40, archive='official-inputs.zip',
+                         archive_sha256=DATA.digest(self.repository / 'official-inputs.zip'),
+                         manifest_sha256=DATA.digest(self.repository / 'inputs-manifest.json'))
+        self.write_lock()
+
+    def test_ranked_inputs_stage_pinned_models_and_require_native_probe(self):
+        self.prepare_optimized()
+        self.add_ranker()
+        DATA.unpack(self.repository, self.lock_path, self.output)
+        config = self.root / 'config'
+        (config / 'doublepinyin').mkdir(parents=True)
+        (config / 'coralpinyinConfig.ini').write_text('[app]\nVersion=0.0.0.0\n[settingsconfig]\nsmartCandidates=true\n', encoding='utf-8')
+        runtime = self.root / 'runtime'
+        with self.assertRaisesRegex(ValueError, 'probe is missing'):
+            DATA.stage_optimized(self.output, self.lock_path, runtime, config, 'a' * 40, '1.0.0.14', Path(sys.executable))
+        self.assertFalse(runtime.exists())
+        with patch('subprocess.run') as native:
+            DATA.stage_optimized(self.output, self.lock_path, runtime, config, 'a' * 40, '1.0.0.14', Path(sys.executable), Path(sys.executable))
+            self.assertEqual(native.call_count, 2)
+        record = json.loads((runtime / 'build-record.json').read_text())
+        self.assertEqual(record['candidate_ranker']['sha256'], self.lock['candidate_ranker']['sha256'])
+        self.assertEqual(record['ranking_profile'], self.lock['ranking_profile'])
+
+    def test_ranked_inputs_reject_wrong_resource_binding_and_lock_substitution(self):
+        self.prepare_optimized()
+        self.add_ranker()
+        self.lock['candidate_ranker']['sha256'] = '0' * 64
+        self.lock['ranking_profile']['parameters']['candidate_ranker_sha256'] = '0' * 64
+        self.write_lock()
+        with self.assertRaisesRegex(ValueError, 'Ranking inputs differ from their lock'):
+            DATA.unpack(self.repository, self.lock_path, self.output)
+        self.assertFalse(self.output.exists())
+        self.lock['ranking_profile']['parameters']['dictionary_sha256'] = '0' * 64
+        self.write_lock()
+        with self.assertRaisesRegex(ValueError, 'does not match'):
+            DATA.load_lock(self.lock_path)
+
     def test_optimized_release_requires_exact_native_restoration(self):
         self.prepare_release()
         self.lock.update(format_version=2, model_mode=DATA.PAIR_MODE,
@@ -281,6 +334,41 @@ class OfficialDataTest(unittest.TestCase):
         tables['installer_restoration_verified'] = True
         self.write_release()
         self.bundle()
+
+    def test_ranked_release_requires_locked_ranker_and_native_score_check(self):
+        self.prepare_neural_release()
+        tables = {'format': 'CBGN0001', 'files': {
+            name: {'size': 128, 'sha256': 'e' * 64}
+            for name in ('mainlexicon.coral', 'languagemodel.coral')}}
+        ranker = dict(path=DATA.CANDIDATE_RANKER, format='CRNK0001', feature_version=1,
+                      features=32, trees=1, nodes=1, size=128, sha256='f' * 64)
+        profile = dict(path=DATA.RANKING_PROFILE, size=512, sha256='d' * 64, parameters=dict(
+            format_version=1, character_weight=.5, search_paths=32, neural_paths=8, rerank_threshold=2,
+            character_model_sha256='1' * 64, candidate_ranker_sha256='f' * 64,
+            dictionary_sha256='e' * 64, pair_bonus_sha256='e' * 64))
+        self.lock.update(format_version=2, model_mode=DATA.PAIR_MODE, precompiled_tables=tables,
+                         candidate_ranker=ranker, ranking_profile=profile)
+        self.write_lock()
+        self.manifest['runtime']['model_mode'] = DATA.PAIR_MODE
+        self.manifest['precompiled_tables'] = dict(tables, storage='compact', native_load_verified=True,
+                                                 installer_restoration_verified=True)
+        self.manifest['candidate_ranker'] = {k: v for k, v in ranker.items() if k != 'path'}
+        self.manifest['ranking_profile'] = profile
+        self.summary['candidate_ranker'] = ranker
+        self.write_release()
+        with self.assertRaisesRegex(ValueError, 'all pass'):
+            self.bundle()
+        self.summary['tests'].append({'name': 'candidate_ranker_test', 'passed': True, 'exit_code': 0})
+        self.manifest['candidate_ranker']['sha256'] = '0' * 64
+        self.write_release()
+        with self.assertRaisesRegex(ValueError, 'ranking models differ'):
+            self.bundle()
+        self.manifest['candidate_ranker']['sha256'] = 'f' * 64
+        self.write_release()
+        self.bundle()
+        info = json.loads((self.root / 'release/BUILD_INFO.json').read_text())
+        self.assertEqual(info['candidate_ranker'], ranker)
+        self.assertEqual(info['ranking_profile'], profile)
 
 
 if __name__ == '__main__':
