@@ -68,7 +68,7 @@
 |---|---|
 | `foundation`、`preferences` | 日志、基础工具和配置管理。 |
 | `composition`、`runtime` | 输入会话状态机、引擎编排与进程内操作适配。 |
-| `phonetics`、`language_model` | 拼音/英文解析检索、组句及语言模型评分。 |
+| `phonetics`、`language_model` | 拼音/英文解析检索、组句及语言模型评分；可选[候选学习排序器](docs/candidate_ranking.md)。 |
 | `storage` | 词典、模型和索引的存储格式及资源访问。 |
 | `learning`、`ranking` | 用户学习历史、候选固定/删除与排序规则。 |
 | `assist` | 部首、笔画、数值、日期时间和符号等特殊输入。 |

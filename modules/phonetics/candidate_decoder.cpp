@@ -245,7 +245,8 @@ namespace
 		struct RankKey
 		{
 			size_t pinyinLength;
-			coral::phonetics::Score probability;
+            double probability;
+            int learned_tie;
 			uint32_t origin;
 		};
 		std::vector<RankKey, coral::phonetics::support::PoolAllocator<RankKey>> keys;
@@ -256,13 +257,16 @@ namespace
 			size_t pinyinLength = 0;
 			for (const auto& item : solution.pinyin)
 				pinyinLength += item.size();
-			keys.push_back(RankKey{ pinyinLength, solution.probability, static_cast<uint32_t>(i) });
+            keys.push_back(RankKey{ pinyinLength, solution.ordering_score(),
+                solution.learned_order_tie < 0 ? (std::numeric_limits<int>::max)() : solution.learned_order_tie,
+                static_cast<uint32_t>(i) });
 		}
 		std::sort(keys.begin(), keys.end(), [](const RankKey& lhs, const RankKey& rhs) {
 			if (lhs.pinyinLength != rhs.pinyinLength)
 				return lhs.pinyinLength > rhs.pinyinLength;
 			if (lhs.probability != rhs.probability)
 				return lhs.probability > rhs.probability;
+            if (lhs.learned_tie != rhs.learned_tie) return lhs.learned_tie < rhs.learned_tie;
 			return lhs.origin < rhs.origin;	 // 原始顺序作末级键，等价于 stable_sort。
 		});
 
@@ -278,6 +282,15 @@ bool coral::phonetics::CandidateDecoder::init(const coral::phonetics::CandidateL
 {
 	lattice_ = &wordLattice;
 	language_model_ = &languageModel;
+    ranking_features_enabled_ = false;
+#if CORAL_ENABLE_CHARACTER_MODEL
+#if defined(_WIN32)
+    const auto* ranking_trace_path = _wgetenv(L"CORAL_RANKING_TRACE");
+#else
+    const auto* ranking_trace_path = std::getenv("CORAL_RANKING_TRACE");
+#endif
+    ranking_features_enabled_ = language_model_->candidate_ranker() || (ranking_trace_path && *ranking_trace_path);
+#endif
 	extended_match_.assign(wordLattice.extended_match_.data(), wordLattice.extended_match_.size());
 	candidates_truncated_ = false;
     full_dictionary_hit_ = false;
@@ -413,6 +426,11 @@ bool coral::phonetics::CandidateDecoder::build_path_solution(const int nodeIndex
 {
 	const auto& arcs = lattice_->get_arc_array();
 	int pinyinCharLength = 0;
+    const auto* pair_model = ranking_features_enabled_ ? language_model_->pair_bonus_model() : nullptr;
+    uint32_t previous_pair = pair_model ? language_model_->pair_bonus_state(condition_id_) : 0;
+    if (pair_model && !previous_pair) previous_pair = pair_model->word_state("<s>");
+    solution.ranking_path = {};
+    solution.ranking_path.pair_available = pair_model != nullptr;
 	{
 		// 先统计整条路径的音节数，避免向量多次扩容；
 		// 随后的 push_back 便不会触发重新分配。
@@ -428,6 +446,22 @@ bool coral::phonetics::CandidateDecoder::build_path_solution(const int nodeIndex
 	{
 		const coral::phonetics::CandidateEdgePayload& data = arcs[static_cast<size_t>(arcIndex)].data;
 		solution.sentence += data.phrase;
+        if (ranking_features_enabled_) {
+            auto& stats = solution.ranking_path;
+            const auto characters = std::count_if(data.phrase.begin(), data.phrase.end(), [](unsigned char c) { return (c & 0xc0) != 0x80; });
+            ++stats.words;
+            stats.single_words += characters == 1;
+            stats.longest_word = std::max(stats.longest_word, double(characters));
+            stats.corrected = stats.corrected || data.is_corrected || data.pinyin_sequence().is_edit_corrected_ || data.pinyin_sequence().is_fuzzy_match_;
+            if (pair_model) {
+                const auto next_pair = pair_model->word_state(data.phrase);
+                const double bonus = pair_model->bonus(previous_pair, next_pair);
+                stats.pair_bonus += bonus;
+                stats.pair_hits += bonus > 0;
+                stats.covered_words += next_pair != 0;
+                previous_pair = next_pair;
+            }
+        }
 		const auto& uiPinyin = data.pinyin_sequence().get_ui_show_pinyin_sequence();
 		solution.word_size += data.pinyin_sequence().get_pinyin_length();
 		if (pathArcs.size() == 1 && data.pinyin_sequence().is_match_english_vocab_)
@@ -767,7 +801,10 @@ bool coral::phonetics::CandidateDecoder::comp(const coral::phonetics::CandidateR
 	const size_t rhsLength = pinyinLength(rhs.pinyin);
 	if (lhsLength != rhsLength)
 		return lhsLength > rhsLength;
-	return lhs.probability > rhs.probability;
+    if (lhs.ordering_score() != rhs.ordering_score()) return lhs.ordering_score() > rhs.ordering_score();
+    const int left = lhs.learned_order_tie < 0 ? (std::numeric_limits<int>::max)() : lhs.learned_order_tie;
+    const int right = rhs.learned_order_tie < 0 ? (std::numeric_limits<int>::max)() : rhs.learned_order_tie;
+    return left < right;
 }
 
 #if CORAL_ENABLE_CHARACTER_MODEL
@@ -787,10 +824,14 @@ void coral::phonetics::CandidateDecoder::rerank_character_paths(
     const auto* model = language_model_->character_model();
 #if defined(_WIN32)
     const auto* trace_path = _wgetenv(L"CORAL_CHARACTER_TRACE");
+    const auto* ranking_trace_path = _wgetenv(L"CORAL_RANKING_TRACE");
 #else
     const auto* trace_path = std::getenv("CORAL_CHARACTER_TRACE");
+    const auto* ranking_trace_path = std::getenv("CORAL_RANKING_TRACE");
 #endif
-    if ((!model || language_model_->character_weight() == 0) && (!trace_path || !*trace_path)) return;
+    const auto* ranker = language_model_->candidate_ranker();
+    if ((!model || language_model_->character_weight() == 0) && (!trace_path || !*trace_path) &&
+        !ranker && (!ranking_trace_path || !*ranking_trace_path)) return;
     std::vector<std::string_view> texts;
     std::vector<size_t> indexes;
     // 搜索保留原有 32 路，只对基础排序前 K 路进行神经评分；尾部路径不补位。
@@ -812,8 +853,13 @@ void coral::phonetics::CandidateDecoder::rerank_character_paths(
     const double reference = scored ? scores.front() : std::numeric_limits<double>::quiet_NaN();
     std::ofstream trace;
     if (trace_path && *trace_path) trace.open(std::filesystem::path(trace_path), std::ios::app);
+    std::vector<coral::language_model::CandidateRankingInput> ranking_inputs;
+    const auto characters = [](std::string_view text) {
+        return std::count_if(text.begin(), text.end(), [](unsigned char c) { return (c & 0xc0) != 0x80; });
+    };
     for (size_t i = 0; i < paths.size(); ++i) {
         auto& path = paths[i];
+        const double base = path.probability;
         double bonus = 0;
         if (scored && std::isfinite(reference) && std::isfinite(scores[i])) {
             const auto length = std::accumulate(path.pinyin.begin(), path.pinyin.end(), size_t{0},
@@ -825,6 +871,46 @@ void coral::phonetics::CandidateDecoder::rerank_character_paths(
         if (trace) trace << lattice_->input_pinyin() << '\t' << character_context_ << '\t' << i << '\t'
             << path.sentence << '\t' << std::setprecision(12) << path.probability << '\t' << scores[i] << '\t' << bonus << '\n';
         path.probability += static_cast<coral::phonetics::Score>(bonus);
+        if (i < scored_limit && (ranker || (ranking_trace_path && *ranking_trace_path))) {
+            const auto length = std::accumulate(path.pinyin.begin(), path.pinyin.end(), size_t{0},
+                [](size_t n, const auto& syllable) { return n + syllable.size(); });
+            ranking_inputs.push_back({base, scores[i], path.probability,
+                static_cast<size_t>(characters(path.sentence)), length, path.ranking_path});
+        }
+    }
+    if (!ranking_inputs.empty()) {
+        const auto features = coral::language_model::make_ranking_features(ranking_inputs, characters(character_context_));
+        if (ranking_trace_path && *ranking_trace_path) {
+            std::ofstream feature_trace(std::filesystem::path(ranking_trace_path), std::ios::app);
+            for (size_t i = 0; i < features.size(); ++i)
+                coral::language_model::write_ranking_trace(feature_trace, lattice_->input_pinyin(), character_context_,
+                    i, paths[i].sentence, features[i]);
+        }
+        if (ranker && scored && std::any_of(ranking_inputs.begin(), ranking_inputs.end(),
+            [](const auto& input) { return std::isfinite(input.neural); })) {
+            std::vector<double> predictions(features.size());
+            bool valid = true;
+            for (size_t i = 0; i < features.size(); ++i) valid = ranker->predict(features[i], predictions[i]) && valid;
+            if (valid) {
+                // 同拼音覆盖长度的候选之间置换原有排序槽，保持与混输、直选候选的分数量纲。
+                std::vector<bool> assigned(features.size(), false);
+                for (size_t i = 0; i < features.size(); ++i) {
+                    if (assigned[i]) continue;
+                    std::vector<size_t> group;
+                    std::vector<double> slots;
+                    for (size_t j = i; j < features.size(); ++j) {
+                        if (ranking_inputs[j].letters != ranking_inputs[i].letters) continue;
+                        assigned[j] = true; group.push_back(j); slots.push_back(paths[j].probability);
+                    }
+                    std::stable_sort(group.begin(), group.end(), [&](size_t a, size_t b) { return predictions[a] > predictions[b]; });
+                    std::sort(slots.begin(), slots.end(), std::greater<double>());
+                    for (size_t j = 0; j < group.size(); ++j) {
+                        paths[group[j]].learned_order_score = slots[j];
+                        paths[group[j]].learned_order_tie = static_cast<int>(j);
+                    }
+                }
+            }
+        }
     }
     rankSolutions(paths);
 }

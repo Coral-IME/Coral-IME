@@ -3,6 +3,8 @@
 #define CORAL_MODULES_PHONETICS_CANDIDATE_RESULT_H_INCLUDED
 
 #include "phonetic_types.h"
+#include "coral/language_model/candidate_ranker.h"
+#include <cmath>
 
 enum class MiddlewareType {
 	Default = 0,      // 默认汉字
@@ -51,6 +53,13 @@ public:
 	MiddlewareType transform_flags{ MiddlewareType::Default };
 	uint32_t phrase_id{ kInvalidPhraseId };
 	coral::phonetics::Score probability{};
+    coral::language_model::RankingPathStats ranking_path;
+    // 学习排序只重新分配原有排序位置，不改写词库或语言模型分数。
+    double learned_order_score = std::numeric_limits<double>::quiet_NaN();
+    int learned_order_tie = -1;
+    double ordering_score() const noexcept {
+        return std::isfinite(learned_order_score) ? learned_order_score : probability;
+    }
 	coral::phonetics::PersonalLexiconIndex index{ -1 };
 	int is_fixed_candidate{ 0 };
 	bool is_corrected{ false };

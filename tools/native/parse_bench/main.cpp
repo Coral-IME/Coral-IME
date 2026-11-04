@@ -85,11 +85,11 @@ bool setup_scratch(const fs::path& dataDirIn, fs::path& scratch) {
     scratch = runtimeDir / ("bench-scratch-" + std::to_string(::GetCurrentProcessId()) + "-" + std::to_string(::GetTickCount64()));
     std::error_code ec;
     fs::create_directories(scratch / "config", ec);
-    if (ec) return false;
+    if (ec) { std::cerr << "scratch directory: " << ec.message() << " " << scratch << '\n'; return false; }
     fs::copy_file(configDir / "coralpinyinConfig.ini",
                   scratch / "config" / "coralpinyinConfig.ini",
                   fs::copy_options::overwrite_existing, ec);
-    if (ec) return false;
+    if (ec) { std::cerr << "scratch configuration: " << ec.message() << " " << configDir << '\n'; return false; }
     _putenv_s("CORAL_LANGENGINE_DATA_DIR", runtimeDir.string().c_str());
     _putenv_s("CORAL_USER_DATA_DIR", scratch.string().c_str());
     _putenv_s("CORAL_TEST_NAMESPACE", ("parse_bench_" + std::to_string(::GetCurrentProcessId())).c_str());

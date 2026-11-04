@@ -12,6 +12,9 @@ coral::phonetics::CandidateResult::CandidateResult(coral::phonetics::CandidateRe
 	transform_flags(other.transform_flags),
 	phrase_id(other.phrase_id),
 	probability(other.probability),
+    ranking_path(other.ranking_path),
+    learned_order_score(other.learned_order_score),
+    learned_order_tie(other.learned_order_tie),
 	index(other.index),
 	is_fixed_candidate(other.is_fixed_candidate),
 	is_corrected(other.is_corrected),
@@ -21,6 +24,9 @@ coral::phonetics::CandidateResult::CandidateResult(coral::phonetics::CandidateRe
 	other.transform_flags = MiddlewareType::Default;;
 	other.phrase_id = kInvalidPhraseId;
 	other.probability = 0.0;
+    other.ranking_path = {};
+    other.learned_order_score = std::numeric_limits<double>::quiet_NaN();
+    other.learned_order_tie = -1;
 	other.index = -1;
 	other.is_additional_mixed = false;
 }
@@ -30,6 +36,9 @@ void coral::phonetics::CandidateResult::reset()
 	sentence = "";
 	display_sentence.clear();
 	probability = 0.0;
+    ranking_path = {};
+    learned_order_score = std::numeric_limits<double>::quiet_NaN();
+    learned_order_tie = -1;
 	word_size = 0;
 	pinyin.clear();
 	pinyinview.clear();
@@ -58,6 +67,9 @@ coral::phonetics::CandidateResult& coral::phonetics::CandidateResult::CandidateR
 		transform_flags = other.transform_flags;
 		phrase_id = other.phrase_id;
 		probability = other.probability;
+        ranking_path = other.ranking_path;
+        learned_order_score = other.learned_order_score;
+        learned_order_tie = other.learned_order_tie;
 		index = other.index;
 		is_fixed_candidate = other.is_fixed_candidate;
 		is_corrected = other.is_corrected;
@@ -68,6 +80,9 @@ coral::phonetics::CandidateResult& coral::phonetics::CandidateResult::CandidateR
 		other.transform_flags = MiddlewareType::Default;
 		other.phrase_id = kInvalidPhraseId;
 		other.probability = 0.0;
+        other.ranking_path = {};
+        other.learned_order_score = std::numeric_limits<double>::quiet_NaN();
+        other.learned_order_tie = -1;
 		other.index = -1;
 		other.is_fixed_candidate = 0;
 		other.is_corrected = false;

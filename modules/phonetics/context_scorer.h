@@ -14,6 +14,7 @@
 #include "verified_resource.h"
 #include "coral/language_model/surface_model.h"
 #include "coral/language_model/pair_bonus_model.h"
+#include "coral/language_model/candidate_ranker.h"
 #if CORAL_ENABLE_CHARACTER_MODEL
 #include "coral/language_model/character_model.h"
 #endif
@@ -65,10 +66,17 @@ public:
     }
     std::shared_ptr<const coral::language_model::CharacterModel> shared_character_model() const { return character_model_; }
     double character_weight() const { return character_weight_; }
+    const coral::language_model::CandidateRanker* candidate_ranker() const {
+        return candidate_ranker_.valid() ? &candidate_ranker_ : nullptr;
+    }
+    bool load_candidate_ranker(const filesystem::path& path, std::string& error) {
+        return candidate_ranker_.load_file(path, error);
+    }
     bool load_character_model(const filesystem::path& path, double weight, std::string& error) {
         if (!std::isfinite(weight) || weight < 0 || weight > 8) return false;
         auto model = std::make_shared<coral::language_model::CharacterModel>();
         if (!model->load_file(path, error)) return false;
+        candidate_ranker_ = {};
         character_model_ = std::move(model);
         character_weight_ = weight; return true;
     }
@@ -84,6 +92,7 @@ private:
 #if CORAL_ENABLE_CHARACTER_MODEL
     std::shared_ptr<const coral::language_model::CharacterModel> character_model_;
     double character_weight_ = 0;
+    coral::language_model::CandidateRanker candidate_ranker_;
 #endif
 };
 } // 命名空间 coral::phonetics 结束（批次 2）

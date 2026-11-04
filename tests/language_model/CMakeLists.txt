@@ -11,6 +11,9 @@ set_tests_properties(surface_model_format PROPERTIES TIMEOUT 60)
 add_test(NAME character_model COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/test_character_model.py $<TARGET_FILE:coral_character_probe>)
 set_tests_properties(character_model PROPERTIES TIMEOUT 60)
+add_test(NAME candidate_ranker COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_candidate_ranker.py $<TARGET_FILE:coral_ranker_probe>)
+set_tests_properties(candidate_ranker PROPERTIES TIMEOUT 60)
 if(TARGET coral_engine_core)
     add_executable(composed_capacity_test composed_capacity_test.cpp)
     target_link_libraries(composed_capacity_test PRIVATE coral_engine_core)

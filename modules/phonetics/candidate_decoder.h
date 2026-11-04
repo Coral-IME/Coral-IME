@@ -124,6 +124,7 @@ private:
 	std::string extended_match_;
 	int direct_candidate_budget_{ kUnlimitedDirectCandidates };
 	bool candidates_truncated_ = false;
+    bool ranking_features_enabled_ = false;
     std::vector<uint32_t> pair_bonus_arc_states_;
     double search_cost_shift_ = 0;
     std::vector<double> terminal_arc_bonuses_;

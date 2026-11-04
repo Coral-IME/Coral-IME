@@ -101,6 +101,7 @@ void coral::phonetics::ContextScorer::configure_character_model(const std::files
 {
     character_model_.reset();
     character_weight_ = 0;
+    candidate_ranker_ = {};
     if (!enabled) return;
 #if defined(_WIN32)
     const wchar_t* path = _wgetenv(L"CORAL_CHARACTER_MODEL");
@@ -122,6 +123,18 @@ void coral::phonetics::ContextScorer::configure_character_model(const std::files
     if (!load_character_model(model_path, weight, error))
         LOG_ERROR("Character language model rejected: " + error);
     else LOG_INFO("Character language model enabled, weight=" + std::to_string(weight));
+    if (!character_model_) return;
+#if defined(_WIN32)
+    const wchar_t* ranker_path = _wgetenv(L"CORAL_CANDIDATE_RANKER");
+#else
+    const char* ranker_path = std::getenv("CORAL_CANDIDATE_RANKER");
+#endif
+    // 首轮只允许显式选择实验模型，普通运行不因目录里多一个文件改变排序。
+    if (ranker_path && *ranker_path) {
+        if (!load_candidate_ranker(std::filesystem::path(ranker_path), error))
+            LOG_ERROR("Candidate ranker rejected: " + error);
+        else LOG_INFO("Candidate LambdaRank model enabled, feature_version=1");
+    }
 }
 
 #endif
