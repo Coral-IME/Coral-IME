@@ -10,3 +10,21 @@ target_link_libraries(background_tasks_test PRIVATE coral_foundation)
 coral_target_common(background_tasks_test)
 add_test(NAME background_tasks COMMAND background_tasks_test)
 set_tests_properties(background_tasks PROPERTIES TIMEOUT 30)
+
+if(MSVC AND CMAKE_CL_64)
+    add_executable(msvc_mutex_runtime_probe msvc_mutex_runtime_probe.cpp)
+    coral_target_common(msvc_mutex_runtime_probe)
+    add_test(NAME msvc_mutex_runtime COMMAND msvc_mutex_runtime_probe)
+    set_tests_properties(msvc_mutex_runtime PROPERTIES TIMEOUT 15)
+
+    if(MSVC_VERSION GREATER_EQUAL 1940)
+        # 新工具链下保留一个未启用兼容构造的对照，仅用于隔离的旧运行库检查。
+        add_executable(msvc_mutex_runtime_incompatible_control EXCLUDE_FROM_ALL
+            msvc_mutex_runtime_probe.cpp)
+        coral_target_common(msvc_mutex_runtime_incompatible_control)
+        target_compile_options(msvc_mutex_runtime_incompatible_control PRIVATE
+            /U_DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR)
+        set_target_properties(msvc_mutex_runtime_incompatible_control PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/incompatible-control/$<CONFIG>")
+    endif()
+endif()

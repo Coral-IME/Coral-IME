@@ -13,6 +13,20 @@
 
 演示构建关闭自动更新，避免演示安装连接正式更新渠道。默认程序版本为 `0.0.0.0`，不是当前正式源码版本的发行声明。现有本地 VS 2019 预设保持可用，CI 独立使用 VS 2022 和镜像已安装的 Windows SDK。检出前关闭 Git 自动换行转换，保留源码和第三方许可证的原始字节及摘要。
 
+## 宿主旧运行库兼容检查
+
+TSF 会使用宿主进程已加载的 MSVC 运行库。部分 Python/Qt 应用自带较旧的 `MSVCP140.dll`，新版 MSVC 默认生成的 mutex 初始化布局会与其不兼容，在激活入口加锁时读取空地址。所有 MSVC 编译单元统一定义 `_DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR`，包括 TSF、静态依赖、第三方源码和预编译头，以保持构造路径一致。仅修改某个源文件或回退本机编译器不能覆盖云端发行构建。
+
+默认 CTest 的 `msvc_mutex_runtime` 检查静态 mutex、对象成员 mutex、跨线程互斥与递归加锁。Release CI 另从 Microsoft 符号服务器下载固定的 x64 MSVCP140 14.26.28720.3，校验大小和 SHA-256 后，在独立临时目录中运行同一个探针，并核对进程实际加载路径。未启用兼容构造的新版工具链对照必须产生 `0xC0000005`，兼容构建必须完成全部加锁操作；对照程序不进入发行二进制 artifact。结果写入 `build/ci-x64/mutex-compat/report.json`，随 Release 日志保留。
+
+本机可使用已取得的同一运行库进行检查，不改系统运行库或已安装的输入法：
+
+```powershell
+python tools/checks/check_msvc_mutex_compat.py --probe build/win-x64-release/coralpinyin/Release/msvc_mutex_runtime_probe.exe --runtime <旧版MSVCP140.dll路径> --work-dir build/mutex-compat
+```
+
+该检查验证实际编译的 C++ mutex 与旧运行库的兼容行为。真实应用中的 TSF 激活、输入、安装和升级仍需单独验收。Microsoft 对该兼容开关的说明见 [STL 17.10 发布说明](https://github.com/microsoft/STL/releases/tag/vs-2022-17.10)。
+
 ## 下载测试产物
 
 1. 打开仓库的 **Actions → Windows CI and demo installer**。

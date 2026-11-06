@@ -3,6 +3,8 @@
   "project_license": "MPL-2.0",
   "license_documents": ["LICENSE", "LICENSING.md", "THIRD_PARTY_NOTICES.md"],
   "project_paths": [
+    "tests/foundation/msvc_mutex_runtime_probe.cpp",
+    "tools/checks/check_msvc_mutex_compat.py",
     "include/coral/language_model/candidate_ranker.h",
     "modules/language_model/candidate_ranker.cpp",
     "tools/data/candidate_ranker_format.py",

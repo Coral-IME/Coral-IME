@@ -18,6 +18,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # 所有配置（含 Release）都生成 PDB，便于 WER/dump 崩溃符号定位。
 # /Zi 编译期生成程序数据库，/DEBUG 让 DLL/EXE 链接出最终 <target>.pdb。
 if(MSVC)
+    # TSF 会复用宿主已加载的运行库；旧版 MSVCP140 不识别新版 mutex 的零初始化布局。
+    # 在所有编译单元（含静态依赖与预编译头）中统一使用兼容构造，避免内联定义混用。
+    add_compile_definitions(_DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR)
     add_compile_options(/Zi)
     add_link_options(/DEBUG)
 endif()

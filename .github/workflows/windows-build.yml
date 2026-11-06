@@ -66,6 +66,12 @@ jobs:
         run: >-
           ctest --test-dir build/ci-x64 -C "$env:CONFIGURATION"
           --no-tests=error --timeout 120 --output-on-failure --output-junit test-results.xml
+      - name: Check mutex compatibility with an older host runtime
+        if: matrix.configuration == 'Release'
+        run: |
+          cmake --build build/ci-x64 --config Release --target msvc_mutex_runtime_incompatible_control --parallel 2 -- /nr:false
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python tools/checks/check_msvc_mutex_compat.py --probe build/ci-x64/coralpinyin/Release/msvc_mutex_runtime_probe.exe --control build/ci-x64/tests/foundation/incompatible-control/Release/msvc_mutex_runtime_incompatible_control.exe --work-dir build/ci-x64/mutex-compat
       - name: Save Release binaries
         if: matrix.configuration == 'Release'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -93,6 +99,7 @@ jobs:
             build/ci-x64/test-results.xml
             build/ci-x64/Testing/Temporary/*.log
             build/ci-x64/CMakeFiles/CMakeConfigureLog.yaml
+            build/ci-x64/mutex-compat/report.json
           if-no-files-found: warn
           retention-days: 14
 
