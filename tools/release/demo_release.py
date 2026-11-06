@@ -25,7 +25,8 @@ def digest(path):
 
 
 def bundle(package_dir, output_dir, version, source_sha, repository, run_url,
-           edition='demo', data_lock=None, test_summary=None, automatic_updates=False):
+           edition='demo', data_lock=None, test_summary=None, automatic_updates=False,
+           description=''):
     app_version(version)
     if not re.fullmatch(r'[0-9a-f]{40}', source_sha):
         raise ValueError('A full source commit SHA is required')
@@ -114,6 +115,7 @@ def bundle(package_dir, output_dir, version, source_sha, repository, run_url,
         'signed': False,
         'automatic_updates': automatic_updates,
         'installation_verified': False,
+        'release_description': description.strip(),
         'installer': {'name': installer_name, 'sha256': installer_hash},
     }
     if summary is not None:
@@ -153,15 +155,17 @@ def bundle(package_dir, output_dir, version, source_sha, repository, run_url,
             notes = notes.replace('自动更新在编译时关闭', '官网 HTTPS 更新检查已启用，可在关于页关闭')
         if lock['model_mode'] == 'independent-word-pair-bonus':
             notes = notes.replace('两个既有正式模型明确复用，未重新训练；数据继续按各自原有许可管理。',
-                                  '更新主词库和独立词对增益模型，保留拼音纠错资源；数据继续按各自原有许可管理。')
+                                  '使用锁定的主词库和独立词对增益模型，保留拼音纠错资源；数据继续按各自原有许可管理。')
             notes = notes.replace('使用本次源码生成资源，已核对安装时还原的词库和语言模型与构建结果一致。',
                                   '原样收集锁定的预编译词库与 CBGN0001 词对模型，安装端无损还原并逐文件核对摘要。')
         if lock.get('character_model'):
             model = lock['character_model']
             notes += f"本包随附本地 GPT-2 字符模型：{model['precision']}，{model['size']:,} 字节，SHA-256 `{model['sha256']}`。长候选在输入停顿后参与重排，模型推理在本机完成。\n\n"
         if lock.get('candidate_ranker'):
-            notes += '新增本地 LambdaRank 候选排序模型，结合词库、词对及字符模型评分优化整句排序，并允许展示多个组句候选。默认三字起，在前 8 条路径上重排；全部推理在本机完成。\n\n'
+            notes += '包含本地 LambdaRank 候选排序模型，结合词库、词对及字符模型评分优化整句排序，并允许展示多个组句候选。默认三字起，在前 8 条路径上重排；全部推理在本机完成。\n\n'
             notes += '字符模型、候选排序模型及正式资源的六项自动检查均已通过。\n\n'
+    if description.strip():
+        notes = '本次更新：' + description.strip() + '\n\n' + notes
     notes += f'''程序版本：{version}
 对应源码：https://github.com/{repository}/commit/{source_sha}
 构建与测试记录：{run_url}
@@ -193,11 +197,13 @@ def main():
     prepare.add_argument('--data-lock', type=Path)
     prepare.add_argument('--test-summary', type=Path)
     prepare.add_argument('--automatic-updates', action='store_true')
+    prepare.add_argument('--description', default='')
     args = parser.parse_args()
     try:
         if args.command == 'bundle':
             bundle(args.package_dir, args.output_dir, args.version, args.source_sha,
-                   args.repository, args.run_url, args.edition, args.data_lock, args.test_summary, args.automatic_updates)
+                   args.repository, args.run_url, args.edition, args.data_lock, args.test_summary,
+                   args.automatic_updates, args.description)
         else:
             print('Valid demo version: ' + args.version)
     except (ValueError, OSError) as error:

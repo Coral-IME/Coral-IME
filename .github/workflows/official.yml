@@ -6,7 +6,7 @@ on:
       version:
         description: '四段程序版本；生成含正式词库的未签名测试包'
         type: string
-        default: '1.0.0.14'
+        default: '1.0.0.15'
         required: true
       create_draft:
         description: '成功后创建测试版 Release 草稿'
@@ -24,7 +24,7 @@ on:
       release_description:
         description: '官网及客户端显示的简短更新说明'
         type: string
-        default: '新增本地 LambdaRank 候选排序模型，优化整句首选与第二候选推荐，更新配套词库及智能候选参数。'
+        default: '修复部分 Python/Qt 应用激活输入法时的崩溃，并修复纠错候选盖过正常简拼的问题，例如 zmhaishi → 怎么还是。'
 
 permissions:
   contents: read
@@ -151,6 +151,8 @@ jobs:
           --precompiled-tables-dir build/official-runtime/data/generallexicon --precompiled-tables-storage compact
           --version "$env:CORAL_CI_VERSION" --makensis "$env:CORAL_NSIS" --sign-mode None --manual-launch --require-character-model --require-candidate-ranker
       - name: Record source and checksums
+        env:
+          RELEASE_DESCRIPTION: ${{ inputs.release_description }}
         run: >-
           python tools/release/demo_release.py bundle --edition official
           --data-lock resources/official-data.json --test-summary build/official-checks/summary.json
@@ -158,6 +160,7 @@ jobs:
           --version "$env:CORAL_CI_VERSION" --source-sha "$env:GITHUB_SHA"
           --repository "$env:GITHUB_REPOSITORY"
           --run-url "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          --description "$env:RELEASE_DESCRIPTION"
           --automatic-updates
       - name: Save official test installer
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

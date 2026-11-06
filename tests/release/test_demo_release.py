@@ -66,6 +66,20 @@ class DemoReleaseTest(unittest.TestCase):
             self.bundle()
         self.assertFalse(self.output.exists())
 
+    def test_release_description_is_recorded_and_checksummed(self):
+        description = '修复宿主激活崩溃与正常简拼被纠错覆盖。'
+        RELEASE.bundle(self.package, self.output, '0.0.0.0', 'a' * 40,
+                       'Coral-IME/Coral-IME',
+                       'https://github.com/Coral-IME/Coral-IME/actions/runs/123',
+                       description=description)
+        info = json.loads((self.output / 'BUILD_INFO.json').read_text(encoding='utf-8'))
+        self.assertEqual(info['release_description'], description)
+        notes = (self.output / 'RELEASE_NOTES.md').read_text(encoding='utf-8')
+        self.assertTrue(notes.startswith('本次更新：' + description + '\n\n'))
+        inventory = dict(line.split('  ')[::-1] for line in
+                         (self.output / 'SHA256SUMS.txt').read_text().splitlines())
+        self.assertEqual(inventory['RELEASE_NOTES.md'], RELEASE.digest(self.output / 'RELEASE_NOTES.md'))
+
     def test_wrong_version_or_incomplete_package_is_rejected(self):
         for field, value in (('version', '1.0.0.3'), ('complete', False),
                              ('installer_compiled', False), ('sign_mode', 'LocalTest'),
