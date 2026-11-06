@@ -151,18 +151,23 @@ bool coral::phonetics::SyllableLattice::make_graph(const string_view pinyinStrin
 	// 错误信号。这样 mfa/jiaos/wji 等简拼输入、fawo/nihao 等正确输入完全
 	// 不生成编辑边（零行为差异、零开销），只有 afwo/shenfme 这类才纠错。
 	// 含分隔符/大写的输入不生成（旧纠错同样只处理纯字母串）。
+    coral::phonetics::RankedPaths normal_paths;
 	if (edit_in_graph_enabled()
+		&& coral::Engine::compatInstance().config().pinyin_correction()
 		&& pinyinString.size() >= 2
 		&& pinyinString.find(PINYIN_SEPARATOR) == string_view::npos
 		&& std::all_of(pinyinString.begin(), pinyinString.end(),
 			[](unsigned char c) { return std::islower(c); })
 		&& !has_clean_full_pinyin_parse(static_cast<int>(pinyinString.size()) + 1))
 	{
+        // 在加入编辑边前冻结正常切分名额；纠错只使用额外预算。
+        coral::phonetics::SyllablePathSearch search;
+        search.calculate_yen_ksp(*this, kMaxTopk, kMaxPathDist, normal_paths);
 		add_edit_edges(pinyinString, syllables);
 	}
 
 	// 纠错后的结果已经分好音节，直接加进拼音图中即可
-	return shrink_graph_by_yen_ksp(kMaxTopk, kMaxPathDist, shortestPaths, pinyinString, &lexicon);
+	return shrink_graph_by_yen_ksp(kMaxTopk, kMaxPathDist, shortestPaths, pinyinString, &lexicon, &normal_paths);
 }
 
 // ===== 方案B第一阶段：模糊音平行边 =====
@@ -708,6 +713,10 @@ bool coral::phonetics::SyllableLattice::get_pinyin_sequences(
 						// 注意不能在这里 continue：循环尾还要 pop_back 维护 pinyinSequenceCopy。
 						PERF_INC(spanQueriesPruned);
 					}
+                    else if (isEditPinyin[j] > isEditPinyin[i] && from != 0 && pinyinSequenceCopy.size() == 1)
+                    {
+                        // 被降噪门控排除的编辑音节不能丢掉标记后冒充正常输入。
+                    }
 					else if (pySeqSearchMap.insert(pySeqSearchInfo{ pyseq, from, vertexData.compact_id, spanEnglishCount != 0 }).second)
 					{
 						coral::phonetics::ParseTextViews subPinyinSequence;
@@ -1051,10 +1060,21 @@ bool coral::phonetics::SyllableLattice::shrink_graph_by_yen_ksp(
 	int dist,
 	coral::phonetics::RankedPaths& shortestPaths,
 	std::string_view input,
-	const coral::phonetics::LexiconCatalog* lexicon)
+	const coral::phonetics::LexiconCatalog* lexicon,
+    coral::phonetics::RankedPaths* normal_paths)
 {
 	coral::phonetics::SyllablePathSearch yenKSP;
 	yenKSP.calculate_yen_ksp(*this, k, dist, shortestPaths);
+    if (normal_paths && !normal_paths->empty()) {
+        // 正常路径先查词，避免纠错的命中、去重和缩图改变正常输入的解释。
+        for (auto& path : shortestPaths) {
+            const bool edited = std::any_of(path.path_.begin(), path.path_.end(), [&](const auto& point) {
+                return point.second >= 0 && edges_[point.second].data.is_edit_edge;
+            });
+            if (edited) normal_paths->push_back(std::move(path));
+        }
+        shortestPaths = std::move(*normal_paths);
+    }
 	add_split_pinyin(shortestPaths);
 	if (lexicon != nullptr) add_english_paths(input, *lexicon, shortestPaths);
 	//todo shift输入大写字符会导致这里为空，这里直接return false,后续需要处理输入法应该可以输入大写单词

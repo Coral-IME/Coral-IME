@@ -205,7 +205,8 @@ private:
 		, coral::LanguageVariant mainType
 		, bool bHitDict
 		, bool bMixPinyins
-		, float score);
+		, float score
+        , bool preserve_normal = false);
 	std::pair<std::string, coral::phonetics::Score> find_best_sentence_path(const std::vector<coral::phonetics::syntax::CorrectionResult>& correctionResults
 		, std::vector<std::string>& originalSequences
 		, const std::string& originalPystring

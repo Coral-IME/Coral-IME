@@ -230,7 +230,7 @@ bool coral::phonetics::SyllableParser::get_parsed_result(PinyinParseContext& con
 			for (const auto& s : context.sents)
 			{
 				// 保留基于原始候选集做出的纠错决策。
-				if (s.is_additional_mixed) continue;
+				if (s.is_additional_mixed || s.is_corrected) continue;
 				size_t len = 0;
 				for (const auto& sv : s.pinyinview)
 					len += sv.size();
@@ -268,7 +268,8 @@ bool coral::phonetics::SyllableParser::get_parsed_result(PinyinParseContext& con
 			{
 				auto correctionRes = generate_correction_string(context.pinyin, 2);
 				update_correction_res(correctionRes);
-				generate_correction_candidates(correctionRes, context.sents, outputSentences, context.pinyin, context.mainType, bHitDict, bMixPinyins, score);
+				generate_correction_candidates(correctionRes, context.sents, outputSentences, context.pinyin, context.mainType, bHitDict, bMixPinyins, score,
+                    context.languageDecoder.has_normal_dictionary_path());
 			}
 			else
 			{
@@ -288,7 +289,8 @@ bool coral::phonetics::SyllableParser::get_parsed_result(PinyinParseContext& con
 						vector<coral::phonetics::syntax::CorrectionResult> correctionRes;
 						correctionRes.emplace_back(coral::phonetics::syntax::CorrectionResult{ {uvReplaced}, 0.0f, method });
 						update_correction_res(correctionRes);
-						generate_correction_candidates(correctionRes, context.sents, outputSentences, context.pinyin, context.mainType, bHitDict, bMixPinyins, score);
+						generate_correction_candidates(correctionRes, context.sents, outputSentences, context.pinyin, context.mainType, bHitDict, bMixPinyins, score,
+                            context.languageDecoder.has_normal_dictionary_path());
 					}
 				}
 			}
@@ -438,8 +440,23 @@ void coral::phonetics::SyllableParser::generate_correction_candidates(std::vecto
 	, bool bHitDict
 	, bool bMixPinyins
 	, float score
+    , bool preserve_normal
 )
 {
+    if (preserve_normal && !sents.empty()) {
+        // 旧纠错也只补充独立候选，不能删除、重排或覆盖可信正常候选的来源。
+        vector<coral::phonetics::CandidateResult> supplements;
+        coral::phonetics::ParseTextSet supplement_sentences;
+        generate_correction_candidates(correctionResults, supplements, supplement_sentences,
+            originalPystring, mainType, bHitDict, bMixPinyins, score, false);
+        for (auto& solution : supplements) {
+            if (!outputSentences.insert(solution.sentence).second) continue;
+            solution.is_correction_supplement = true;
+            sents.push_back(std::move(solution));
+        }
+        std::stable_sort(sents.begin(), sents.end(), coral::phonetics::CandidateDecoder::comp);
+        return;
+    }
 	bool needDeleteBadFirst = false;
 	if(!sents.empty())
 	{
@@ -1505,6 +1522,7 @@ void coral::phonetics::SyllableParser::parse_post_middleware(
 					s.display_sentence = postStr;
 				s.word_size = it->word_size;
 				s.is_corrected = it->is_corrected;
+                s.is_correction_supplement = it->is_correction_supplement;
 
 				// 标签去重：带注音的变体可能上屏同一个词。
 				outputedSentences.insert(postStr);

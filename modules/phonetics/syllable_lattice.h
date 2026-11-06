@@ -142,7 +142,8 @@ private:
 		int dist,
 		coral::phonetics::RankedPaths& shortestPaths,
 		std::string_view input = {},
-		const coral::phonetics::LexiconCatalog* lexicon = nullptr);
+		const coral::phonetics::LexiconCatalog* lexicon = nullptr,
+        coral::phonetics::RankedPaths* normal_paths = nullptr);
 	void add_english_paths(std::string_view input, const coral::phonetics::LexiconCatalog& lexicon, coral::phonetics::RankedPaths& paths);
 
 	int add_temp_edge(

@@ -2,6 +2,7 @@
 #include "syllable_parser.h"
 #include "lexicon_table.h"
 #include "runtime_context.h"
+#include "syllable_catalog.h"
 #include <fstream>
 #include <iostream>
 #include <cstdlib>
@@ -182,6 +183,153 @@ void expect_no_short_mixed_english(const std::string& key, const std::string& di
 }
 }
 
+// 人工低频正常词与高频纠错词竞争，覆盖切分、组句、去重和预算保护。
+void check_normal_input_priority(const std::filesystem::path& root) {
+    const auto dir = root / "normal-input";
+    std::filesystem::create_directories(dir);
+    write(dir / "l.csv", "pinyin,frequency,word,fullPinyin\n"
+        "zen'me,20,怎么,zen'me\nzen'me'hai'shi,10,怎么还是,zen'me'hai'shi\n"
+        "zen'me'hai,10,怎么还,zen'me'hai\nji'qi,20,机器,ji'qi\nshang,20,上,shang\n"
+        "z'm,20,怎么,zen'me\nz'm'h's,10,怎么还是,zen'me'hai'shi\n"
+        "z'm'h,10,怎么还,zen'me'hai\nj'q,20,机器,ji'qi\n"
+        "jia'shang,90000000,加上,jia'shang\njie'shang,80000000,接上,jie'shang\n"
+        "jin'shang,70000000,进上,jin'shang\nzai'chai'shi,90000000,再拆是,zai'chai'shi\n"
+        "z'c's,90000000,再拆是,zai'chai'shi\nz's's,80000000,在晒是,zai'shai'shi\n"
+        "z'z's,70000000,住宅是,zhu'zhai'shi\n"
+        "zai'shai'shi,80000000,在晒是,zai'shai'shi\nzhu'zhai'shi,70000000,住宅是,zhu'zhai'shi\n"
+        "fa'wo,1000,发我,fa'wo\nshen'fen,20,身份,shen'fen\ns'f,20,身份,shen'fen\n"
+        "me,20,么,me\nsheng'ce,10,声测,sheng'ce\n");
+    write(dir / "m.csv", "prob,prev_word,next_word,prev_fullPinyin,next_fullPinyin\n"
+        "-1,机器,上,ji'qi,shang\n");
+    expect(build_resource_tables(dir / "l.csv", dir / "m.csv", dir / "mainlexicon.coral",
+        dir / "languagemodel.coral"), "normal-input fixture build");
+    coral::phonetics::LexiconLocations paths;
+    paths.primaryMarisa.path = dir / "primary.marisa";
+    paths.primaryData.path = dir / "primary.dat";
+    paths.versionId = "normal-input-" + std::to_string(GetCurrentProcessId());
+    coral::phonetics::LexiconCatalog lexicon;
+    expect(lexicon.load_primary_lexicon(paths), "normal-input fixture load");
+    coral::phonetics::ContextScorer model;
+    expect(model.load_g_bin_only({dir / "languagemodel.coral", {}}, paths.versionId), "normal-input model load");
+    syllable_strview_map syllables;
+    for (auto syllable : validPinyinCombines) syllables.emplace(syllable, kFullCost);
+    for (std::string_view initial : {"b", "p", "m", "f", "d", "t", "n", "l", "g", "k",
+             "h", "j", "q", "x", "r", "z", "c", "s", "y", "w"})
+        syllables.emplace(initial, kShenmuCost);
+    syllables.emplace("sh", kShenmuCost);
+    syllables.emplace("ch", kShenmuCost);
+    syllables.emplace("zh", kShenmuCost);
+    const auto run = [&](const std::string& input, const std::string& target, bool correction,
+                         bool expect_normal, int budget) {
+        auto config = std::make_shared<coral::EngineConfig>();
+        config->pinyin_correction = correction;
+        coral::Engine::compatInstance().config().update(config);
+        coral::phonetics::support::ParseArenaScope arena;
+        coral::phonetics::SyllableLattice graph;
+        coral::phonetics::CandidateLattice lattice;
+        coral::phonetics::ParseSequences sequences;
+        bool full = false, hit = false;
+        expect(graph.get_pinyin_sequences(input, syllables, 30, sequences, full, false,
+            lattice, lexicon, hit, {}, {}, false, false), "normal-input segmentation");
+        const auto& arcs = lattice.get_arc_array();
+        for (const auto& arc : arcs) {
+            const auto& sequence = arc.data.pinyin_sequence();
+            if (sequence.is_edit_corrected_ || sequence.is_match_english_vocab_) continue;
+            std::string query, original = input.substr(lattice.input_offset(arc.from),
+                lattice.input_offset(arc.to) - lattice.input_offset(arc.from));
+            original.erase(std::remove(original.begin(), original.end(), '\''), original.end());
+            for (auto syllable : sequence.sequences_) query += syllable;
+            expect(query == original, "unedited arcs preserve original input including interior syllables");
+        }
+        const bool edited = std::any_of(arcs.begin(), arcs.end(), [](const auto& arc) {
+            return arc.data.pinyin_sequence().is_edit_corrected_;
+        });
+        if (!correction) expect(!edited, "correction off creates no edit arcs");
+        if (correction && input == "jiqshang") expect(edited, "fixture exercises competing edit arcs");
+        coral::phonetics::CandidateDecoder decoder;
+        expect(decoder.init(lattice, model), "normal-input decoder init");
+        expect(decoder.has_normal_dictionary_path() == expect_normal, "credible normal coverage excludes fallback letters");
+        decoder.set_direct_candidate_budget(budget);
+        vector<coral::phonetics::CandidateResult> solutions;
+        coral::phonetics::ParseTextSet seen;
+        float cost = kMaxWeight;
+        expect(decoder.get_parsed_res(solutions, syllables, seen, sequences, cost), "normal-input decode");
+        if (solutions.empty() || solutions.front().sentence != target) {
+            std::cerr << "input=" << input << " correction=" << correction << " budget=" << budget
+                << " normal=" << decoder.has_normal_dictionary_path() << " arcs=" << arcs.size() << " candidates=";
+            for (size_t i = 0; i < std::min(size_t{4}, solutions.size()); ++i)
+                std::cerr << solutions[i].sentence << '|';
+            std::cerr << '\n';
+        }
+        expect(!solutions.empty() && solutions.front().sentence == target, "normal-input first candidate preserved");
+        expect(std::count_if(solutions.begin(), solutions.end(), [&](const auto& solution) {
+            return solution.sentence == target;
+        }) == 1, "normal-input candidate is not duplicated");
+        if (!solutions.empty()) expect(solutions.front().is_corrected == !expect_normal,
+            "normal and edited candidates retain their source");
+        if (correction && input == "jiqshang" && budget == kUnlimitedDirectCandidates) {
+            expect(std::any_of(solutions.begin(), solutions.end(), [](const auto& solution) {
+                return solution.sentence == u8"加上" && solution.is_corrected && solution.is_correction_supplement;
+            }), "high-frequency correction remains selectable behind normal composition");
+        }
+    };
+    for (bool correction : {true, false}) {
+        for (int budget : {1, kUnlimitedDirectCandidates}) {
+            run("zmhaishi", u8"怎么还是", correction, true, budget);
+            run("zmhai", u8"怎么还", correction, true, budget);
+            run("jiqshang", u8"机器上", correction, true, budget);
+            run("ji'q'shang", u8"机器上", correction, true, budget);
+            run("jiqishang", u8"机器上", correction, true, budget);
+        }
+    }
+    run("afwo", u8"发我", true, false, kUnlimitedDirectCandidates);
+    run("shenfme", u8"身份么", true, true, kUnlimitedDirectCandidates);
+    {
+        // 超过解码器总名额的高频纠错不能耗尽正常路径的状态预算。
+        coral::phonetics::support::ParseArenaScope arena;
+        coral::phonetics::CandidateLattice lattice;
+        lattice.init_graph(8, "jiqshang", lexicon);
+        const auto add = [&](std::string_view word, const coral::phonetics::ParseTextViews& syllables,
+                             int from, int to, float weight, bool edit) {
+            coral::phonetics::PhoneticSequence sequence(syllables, {}, from, to, 3, false, false);
+            sequence.is_edit_corrected_ = edit;
+            coral::phonetics::ParsePhrases phrases;
+            phrases.emplace_back(word, "", weight, kInvalidPhraseId, 0.f);
+            bool hit = false, english = false, span = false;
+            expect(lattice.process_phrases(phrases, sequence, lexicon, false, 100, 8,
+                false, {}, "", hit, english, span), "budget stress arc");
+        };
+        add(u8"机器", {"ji", "q"}, 0, 3, -25.f, false);
+        add(u8"上", {"shang"}, 3, 7, -1.f, false);
+        std::vector<std::string> words;
+        words.reserve(40);
+        for (int i = 0; i < 40; ++i) {
+            words.push_back(u8"纠错" + std::to_string(i));
+            add(words.back(), {"jiq"}, 0, 3, -1.f, true);
+        }
+        coral::phonetics::CandidateDecoder decoder;
+        expect(decoder.init(lattice, model), "budget stress decoder");
+        vector<coral::phonetics::CandidateResult> solutions;
+        coral::phonetics::ParseTextSet seen;
+        float cost = kMaxWeight;
+        expect(decoder.get_parsed_res(solutions, syllables, seen, {}, cost), "budget stress decode");
+        expect(!solutions.empty() && solutions.front().sentence == u8"机器上" && !solutions.front().is_corrected,
+            "normal composition survives more than 32 higher-scoring corrections");
+    }
+    // 新增候选属性必须跨移动和对象池重用正确传递。
+    coral::phonetics::CandidateResult candidate;
+    candidate.is_correction_supplement = true;
+    auto moved = std::move(candidate);
+    expect(moved.is_correction_supplement && !candidate.is_correction_supplement, "supplement source moves");
+    candidate = std::move(moved);
+    expect(candidate.is_correction_supplement && !moved.is_correction_supplement, "supplement source move assignment");
+    candidate.reset();
+    expect(!candidate.is_correction_supplement, "supplement source resets for pool reuse");
+    auto config = std::make_shared<coral::EngineConfig>();
+    config->pinyin_correction = false;
+    coral::Engine::compatInstance().config().update(config);
+}
+
 int main() {
     const auto dir = std::filesystem::temp_directory_path() /
         ("coral-mixed-test-" + std::to_string(GetCurrentProcessId()));
@@ -350,6 +498,7 @@ int main() {
     legacyLexicon.shutdown_user_history();
     lexicon.shutdown_user_history();
     check_full_hit_composition(dir);
+    check_normal_input_priority(dir);
     std::cout << "mixed_language failures=" << failures << std::endl;
     // 既有单例线程池的销毁不在本回归测试范围内。
     std::_Exit(failures ? 1 : 0);

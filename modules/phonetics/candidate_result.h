@@ -63,6 +63,8 @@ public:
 	coral::phonetics::PersonalLexiconIndex index{ -1 };
 	int is_fixed_candidate{ 0 };
 	bool is_corrected{ false };
+    // 存在完整的正常词库解释时，纠错只能占用补充候选的位置。
+    bool is_correction_supplement{ false };
 	// 附加组句（包括混输）可被选中，但不得改变原首选的纠错门控。
 	bool is_additional_mixed{ false };
 };

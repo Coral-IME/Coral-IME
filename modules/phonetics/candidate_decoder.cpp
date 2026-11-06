@@ -235,7 +235,7 @@ namespace
 
 	// 与 CLanguageDecoder::comp 的语义保持一致：本函数只重排，不改变解集合。
 	// 为避免直接排序体积较大的 Solution，先构建轻量键向量再排序。
-	// 键依次比较拼音长度、概率与原始顺序。
+	// 键依次比较输入覆盖长度、正常输入优先级、概率与原始顺序。
 	void rankSolutions(vector<coral::phonetics::CandidateResult>& solutions)
 	{
 		const size_t count = solutions.size();
@@ -245,6 +245,7 @@ namespace
 		struct RankKey
 		{
 			size_t pinyinLength;
+            bool supplement;
             double probability;
             int learned_tie;
 			uint32_t origin;
@@ -257,13 +258,14 @@ namespace
 			size_t pinyinLength = 0;
 			for (const auto& item : solution.pinyin)
 				pinyinLength += item.size();
-            keys.push_back(RankKey{ pinyinLength, solution.ordering_score(),
+            keys.push_back(RankKey{ pinyinLength, solution.is_correction_supplement, solution.ordering_score(),
                 solution.learned_order_tie < 0 ? (std::numeric_limits<int>::max)() : solution.learned_order_tie,
                 static_cast<uint32_t>(i) });
 		}
 		std::sort(keys.begin(), keys.end(), [](const RankKey& lhs, const RankKey& rhs) {
 			if (lhs.pinyinLength != rhs.pinyinLength)
 				return lhs.pinyinLength > rhs.pinyinLength;
+            if (lhs.supplement != rhs.supplement) return !lhs.supplement;
 			if (lhs.probability != rhs.probability)
 				return lhs.probability > rhs.probability;
             if (lhs.learned_tie != rhs.learned_tie) return lhs.learned_tie < rhs.learned_tie;
@@ -335,6 +337,27 @@ bool coral::phonetics::CandidateDecoder::init(const coral::phonetics::CandidateL
     full_dictionary_hit_ = std::any_of(arcs.begin(), arcs.end(), [&](const auto& arc) {
         return is_full_dictionary_arc(arc, vertexCount - 1);
     });
+    // 可信解释必须由未改写输入的词库弧覆盖全串，原字母回退不能成为保护依据。
+    has_edit_corrections_ = std::any_of(arcs.begin(), arcs.end(), [](const auto& arc) {
+        return arc.data.is_usable() && (arc.data.is_corrected || arc.data.pinyin_sequence().is_edit_corrected_);
+    });
+    std::vector<char, coral::phonetics::support::PoolAllocator<char>> normal(vertexCount, 0);
+    normal[0] = 1;
+    for (int from = 0; from < vertexCount - 1; ++from) {
+        if (!normal[from]) continue;
+        for (int at = csr_offset_[from]; at < csr_offset_[from + 1]; ++at) {
+            const auto& arc = arcs[edge_indices_[at]];
+            const auto& data = arc.data;
+            if (!data.is_usable()) continue;
+            const auto& sequence = data.pinyin_sequence();
+            if (arc.to <= from || arc.to >= vertexCount || !data.is_usable() ||
+                !data.dictionary_match || data.phrase_id == kExtendedMatchId || data.is_corrected ||
+                data.english_context_only || sequence.is_edit_corrected_ || sequence.is_match_english_vocab_)
+                continue;
+            normal[arc.to] = 1;
+        }
+    }
+    normal_dictionary_path_ = normal.back() != 0;
     if (full_dictionary_hit_) {
         heuristic_.clear();
         mixed_heuristic_.clear();
@@ -446,6 +469,7 @@ bool coral::phonetics::CandidateDecoder::build_path_solution(const int nodeIndex
 	{
 		const coral::phonetics::CandidateEdgePayload& data = arcs[static_cast<size_t>(arcIndex)].data;
 		solution.sentence += data.phrase;
+        solution.is_corrected = solution.is_corrected || data.is_corrected || data.pinyin_sequence().is_edit_corrected_;
         if (ranking_features_enabled_) {
             auto& stats = solution.ranking_path;
             const auto characters = std::count_if(data.phrase.begin(), data.phrase.end(), [](unsigned char c) { return (c & 0xc0) != 0x80; });
@@ -478,10 +502,7 @@ bool coral::phonetics::CandidateDecoder::build_path_solution(const int nodeIndex
 	solution.probability = static_cast<coral::phonetics::Score>(-leaf.cost + search_cost_shift_ * leaf.position);
 	solution.set_probability_with_weight(
 		static_cast<coral::phonetics::Score>(1.0f / (1.0f + static_cast<coral::phonetics::Score>(pinyinCharLength))));
-	if (pathArcs.size() == 1)
-		solution.is_corrected = arcs[static_cast<size_t>(pathArcs.front())].data.is_corrected;
-	else
-		solution.is_corrected = false;
+    solution.is_correction_supplement = normal_dictionary_path_ && solution.is_corrected;
 	return !solution.sentence.empty();
 }
 
@@ -523,7 +544,8 @@ bool coral::phonetics::CandidateDecoder::find_best_paths(
 	vector<coral::phonetics::CandidateResult>& pathSolutions,
 	const int targetK,
 	coral::phonetics::Score& shortestPathCost,
-	const bool requireEnglish)
+	const bool requireEnglish,
+    const bool normal_only)
 {
 	recycle_solutions(pathSolutions);
 	shortestPathCost = kMaxWeight;
@@ -666,6 +688,7 @@ bool coral::phonetics::CandidateDecoder::find_best_paths(
 				continue;
 			const bool english = data.pinyin_sequence().is_match_english_vocab_;
 			if (!requireEnglish && (english || data.english_context_only)) continue;
+            if (normal_only && (data.is_corrected || data.pinyin_sequence().is_edit_corrected_)) continue;
 
 #ifdef _MSC_VER
 			// 预取下一跳的一元记录，减少 FstDecoder 访问 uni 表的缓存缺失。
@@ -801,6 +824,8 @@ bool coral::phonetics::CandidateDecoder::comp(const coral::phonetics::CandidateR
 	const size_t rhsLength = pinyinLength(rhs.pinyin);
 	if (lhsLength != rhsLength)
 		return lhsLength > rhsLength;
+    if (lhs.is_correction_supplement != rhs.is_correction_supplement)
+        return !lhs.is_correction_supplement;
     if (lhs.ordering_score() != rhs.ordering_score()) return lhs.ordering_score() > rhs.ordering_score();
     const int left = lhs.learned_order_tie < 0 ? (std::numeric_limits<int>::max)() : lhs.learned_order_tie;
     const int right = rhs.learned_order_tie < 0 ? (std::numeric_limits<int>::max)() : rhs.learned_order_tie;
@@ -939,6 +964,21 @@ bool coral::phonetics::CandidateDecoder::get_parsed_res(
     shortestPathCost = kMaxWeight;
     if (!full_dictionary_hit_) {
         find_best_paths(pathSolutions, kPathCandidateLimit, shortestPathCost);
+        if (has_edit_corrections_ && normal_dictionary_path_) {
+            // 独立搜索正常组句，防止纠错占满解码器的候选与状态预算。
+            vector<coral::phonetics::CandidateResult> normal_solutions;
+            coral::phonetics::Score normal_cost = kMaxWeight;
+            find_best_paths(normal_solutions, kPathCandidateLimit, normal_cost, false, true);
+            for (auto& solution : normal_solutions) {
+                const auto existing = std::find_if(pathSolutions.begin(), pathSolutions.end(), [&](const auto& item) {
+                    return item.sentence == solution.sentence;
+                });
+                if (existing == pathSolutions.end()) pathSolutions.push_back(std::move(solution));
+                else if (existing->is_corrected) *existing = std::move(solution);
+            }
+            if (normal_cost != kMaxWeight) shortestPathCost = normal_cost;
+            rankSolutions(pathSolutions);
+        }
 #if CORAL_ENABLE_CHARACTER_MODEL
         rerank_character_paths(pathSolutions);
 #endif
@@ -987,7 +1027,7 @@ bool coral::phonetics::CandidateDecoder::get_parsed_res(
             if (data.phrase_id == kExtendedMatchId) continue;
 
             const auto& sequence = data.pinyin_sequence();
-            if (full_dictionary_hit_ && (sequence.is_fuzzy_match_ || sequence.is_edit_corrected_ || data.is_corrected))
+            if (full_dictionary_hit_ && !sequence.is_edit_corrected_ && (sequence.is_fuzzy_match_ || data.is_corrected))
                 continue;
 			const auto& uiPinyin = data.pinyin_sequence().get_ui_show_pinyin_sequence();
 			if (uiPinyin.empty())
@@ -1037,11 +1077,16 @@ bool coral::phonetics::CandidateDecoder::get_parsed_res(
 		}
 	}
 
-	const auto directRankLess = [&directs](const int lhs, const int rhs) {
+	const auto directRankLess = [&](const int lhs, const int rhs) {
 		const DirectRef& a = directs[lhs];
 		const DirectRef& b = directs[rhs];
 		if (a.pinyinCharLen != b.pinyinCharLen)
 			return a.pinyinCharLen > b.pinyinCharLen;
+        const bool a_supplement = normal_dictionary_path_ &&
+            (arcs[a.arcIndex].data.is_corrected || arcs[a.arcIndex].data.pinyin_sequence().is_edit_corrected_);
+        const bool b_supplement = normal_dictionary_path_ &&
+            (arcs[b.arcIndex].data.is_corrected || arcs[b.arcIndex].data.pinyin_sequence().is_edit_corrected_);
+        if (a_supplement != b_supplement) return !a_supplement;
 		if (a.probability != b.probability)
 			return a.probability > b.probability;
 		return lhs < rhs;
@@ -1081,7 +1126,8 @@ bool coral::phonetics::CandidateDecoder::get_parsed_res(
 			solution.sentence = data.phrase;
 			solution.probability = ref.probability;
 			solution.word_size = data.pinyin_sequence().get_pinyin_length();
-			solution.is_corrected = data.is_corrected;
+			solution.is_corrected = data.is_corrected || data.pinyin_sequence().is_edit_corrected_;
+            solution.is_correction_supplement = normal_dictionary_path_ && solution.is_corrected;
 			if (data.pinyin_sequence().is_match_english_vocab_)
 				solution.transform_flags = solution.transform_flags | MiddlewareType::NoStoreUserLexicon;
 			const auto probe = dedup.probe(solution.sentence);

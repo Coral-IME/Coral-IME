@@ -45,6 +45,7 @@ public:
 	// 池子放在这里活不过一次解析
 	void set_candidate_pool(vector<coral::phonetics::CandidateResult>* pool) { solution_pool_ = pool; }
 	[[nodiscard]] bool candidates_truncated() const noexcept { return candidates_truncated_; }
+    [[nodiscard]] bool has_normal_dictionary_path() const noexcept { return normal_dictionary_path_; }
 	static bool comp(const coral::phonetics::CandidateResult& lhs, const coral::phonetics::CandidateResult& rhs);
 
 private:
@@ -92,7 +93,7 @@ private:
         return ordinary + condition_influence_ * (conditional - ordinary);
     }
 
-	bool find_best_paths(vector<coral::phonetics::CandidateResult>& pathSolutions, int targetK, coral::phonetics::Score& shortestPathCost, bool requireEnglish = false);
+	bool find_best_paths(vector<coral::phonetics::CandidateResult>& pathSolutions, int targetK, coral::phonetics::Score& shortestPathCost, bool requireEnglish = false, bool normal_only = false);
 #if CORAL_ENABLE_CHARACTER_MODEL
     void rerank_character_paths(vector<coral::phonetics::CandidateResult>& paths) const;
 #endif
@@ -130,6 +131,8 @@ private:
     std::vector<double> terminal_arc_bonuses_;
     float terminal_bonus_ = 1.0f;
     bool full_dictionary_hit_ = false;
+    bool normal_dictionary_path_ = false;
+    bool has_edit_corrections_ = false;
     uint32_t condition_id_ = kInvalidPhraseId;
     float condition_influence_ = 0.7f;
 #if CORAL_ENABLE_CHARACTER_MODEL

@@ -18,6 +18,7 @@ coral::phonetics::CandidateResult::CandidateResult(coral::phonetics::CandidateRe
 	index(other.index),
 	is_fixed_candidate(other.is_fixed_candidate),
 	is_corrected(other.is_corrected),
+    is_correction_supplement(other.is_correction_supplement),
 	is_additional_mixed(other.is_additional_mixed)
 {
 	other.word_size = 0;
@@ -28,6 +29,7 @@ coral::phonetics::CandidateResult::CandidateResult(coral::phonetics::CandidateRe
     other.learned_order_score = std::numeric_limits<double>::quiet_NaN();
     other.learned_order_tie = -1;
 	other.index = -1;
+    other.is_correction_supplement = false;
 	other.is_additional_mixed = false;
 }
 
@@ -47,6 +49,7 @@ void coral::phonetics::CandidateResult::reset()
 	index = -1;
 	is_fixed_candidate = 0;
 	is_corrected = false;
+    is_correction_supplement = false;
 	is_additional_mixed = false;
 }
 
@@ -73,6 +76,7 @@ coral::phonetics::CandidateResult& coral::phonetics::CandidateResult::CandidateR
 		index = other.index;
 		is_fixed_candidate = other.is_fixed_candidate;
 		is_corrected = other.is_corrected;
+        is_correction_supplement = other.is_correction_supplement;
 		is_additional_mixed = other.is_additional_mixed;
 		// 三个容器成员已经被 move 走，标准保证它们处于空状态，
 		// 这里只补齐标量字段；调 reset() 会再对空串空 vector 做一遍无谓的清空。
@@ -86,6 +90,7 @@ coral::phonetics::CandidateResult& coral::phonetics::CandidateResult::CandidateR
 		other.index = -1;
 		other.is_fixed_candidate = 0;
 		other.is_corrected = false;
+        other.is_correction_supplement = false;
 		other.is_additional_mixed = false;
 	}
 	return *this;
