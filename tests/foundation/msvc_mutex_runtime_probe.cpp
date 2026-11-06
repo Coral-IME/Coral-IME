@@ -1,3 +1,8 @@
+// 对照必须在包含任何标准库头之前关闭兼容构造，不依赖编译选项排列顺序。
+#ifdef CORAL_MUTEX_INCOMPATIBLE_CONTROL
+#undef _DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR
+#endif
+
 #include <windows.h>
 
 #include <cstdio>

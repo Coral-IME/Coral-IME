@@ -22,8 +22,8 @@ if(MSVC AND CMAKE_CL_64)
         add_executable(msvc_mutex_runtime_incompatible_control EXCLUDE_FROM_ALL
             msvc_mutex_runtime_probe.cpp)
         coral_target_common(msvc_mutex_runtime_incompatible_control)
-        target_compile_options(msvc_mutex_runtime_incompatible_control PRIVATE
-            /U_DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR)
+        target_compile_definitions(msvc_mutex_runtime_incompatible_control PRIVATE
+            CORAL_MUTEX_INCOMPATIBLE_CONTROL)
         set_target_properties(msvc_mutex_runtime_incompatible_control PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/incompatible-control/$<CONFIG>")
     endif()
